@@ -1,0 +1,78 @@
+#!/bin/bash
+
+# Script: GnUbuntu-update
+# Date: 15/05/2016
+# Criado por: x_SHAMAN_x
+#
+# Script para atualização da ferramenta GnUbuntu
+
+# Variaveis somente leitura 
+declare -r SCRIPT=$(basename $0)
+declare -r BIN="/usr/bin/GnUbuntu"
+declare -r UPDATE="raw.githubusercontent.com/terminalgnulinux/gnubuntu/master/GnUbuntu"
+declare -r TMP_FILE=/tmp/gnUpdate.tmp
+declare -r PATCH=/tmp/patch.tmp
+declare -r MSG_OK="\e[00;32m[OK]\e[00;m"
+declare -r MSG_FAIL="\e[00;31m[FALHA]\e[00;m"
+
+# Verique se o usuário é root e seu script está instalado
+if [ $UID -ne 0 ]
+then
+	echo "$SCRIPT: Requer privilégios root." >&2
+	exit 1
+elif [ ! -x $BIN ]
+then
+	echo "$SCRIPT: '$(basename $BIN)' não está instalado." >&2
+	exit 1
+fi
+
+# Baixa o código fonte da atualização no repositório do git hub
+# criando um arquivo temporário para geração do patch
+echo -n "Baixando atualizações..."
+wget --connect-timeout=3 $UPDATE -O $TMP_FILE &>/dev/null
+
+# Se não houver conexão em 3 segundos com o servidor do git, a conexão é abortada.
+if [ $? -ne 0 ]
+then
+	echo -e "$MSG_FAIL" >&2
+	echo "$SCRIPT: Falha ao tentar baixar as atualizações." >&2
+	echo "Verique sua conexão com a internet e tente novamente." >&2
+	exit 1
+fi
+
+echo -e "$MSG_OK"
+
+# Compara o código fonte instalado com código da atualização e redireciona a diferença para o patch
+diff -uNr $BIN $TMP_FILE > $PATCH 
+
+echo -n "Verificando versão instalada..."
+sleep 2
+echo -e "$MSG_OK"
+
+# Se o tamanho do arquivo for '0', não há diferentes entre os códigos
+if [ ! -s $PATCH ]
+then
+	echo "$SCRIPT: '$(basename $BIN)' a versão instalada já está atualizada." >&1
+	exit 0
+fi
+
+# Aplica a diferença da atualização no código instalado
+echo -n  "Atualizando sistema..."
+patch --silent $BIN < $PATCH 
+
+sleep 2
+
+if [ $? -eq 0 ]
+then
+	echo -e "$MSG_OK"
+else
+	echo -e "$MSG_FAIL"
+	echo "$SCRIPT: Ocorreu um erro durante o processo de atualização." >&2
+	exit 1
+fi
+
+# Remove os arquivos temporários
+rm -f $TMP_FILE &>/dev/null
+rm -f $PATCH &>/dev/null
+
+exit 0
