@@ -5,14 +5,12 @@
 # Criado por: SHAMAN
 # Data: 28 de Abril de 2016
 # 
-# testando
 
 declare PASS
 declare CMD 
 
 declare -r SCRIPT=$(basename $0)
-#declare -rx AUTHOR="x_SHAMAN_x"
-declare -rx AUTHOR="Garotinha"
+declare -rx AUTHOR="x_SHAMAN_x"
 declare -r LOGO="Ubuntu - GnuLinux"
 
 declare -r FILE=/tmp/$SCRIPT.info
