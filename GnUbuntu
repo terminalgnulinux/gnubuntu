@@ -1,0 +1,1656 @@
+#!/bin/bash 
+
+# Script Ubuntu - GnuLinux
+# Limpeza, Informações do sistema, atualização, Instalação de ambiente gráfico e USB Bootável
+# Criado por: SHAMAN
+# Data: 28 de Abril de 2016
+# 
+
+declare PASS
+declare CMD 
+
+declare -r SCRIPT=$(basename "$0")
+declare -rx AUTHOR="x_SHAMAN_x"
+declare -r LOGO="Ubuntu - GnuLinux"
+
+declare -r FILE=/tmp/$SCRIPT.info
+declare -r BASE_DIR=$HOME/.gnubuntu
+declare -r BKP_SCRIPT_DIR=$BASE_DIR/scripts  
+declare -r BKP_SCRIPT_LOG=$BASE_DIR/log
+declare -r LOG=$BKP_SCRIPT_LOG/$SCRIPT.log
+declare -r FIRSTEXEC=$BASEDIR/init
+declare -r CRONTAB_FILE=$BASE_DIR/profile.crontab
+declare -r PID=/tmp/GnUbuntu.pid
+declare -r NICON=/usr/share/icons/hicolor/128x128/apps/GnUbuntu.jpg
+
+[ ! -x /usr/bin/apt-get ] && {
+	echo "$SCRIPT: Incompatível com o seu sistema." >&2
+	exit 1
+}
+
+if [ $SCRIPT != "GnUbuntu" ]; then
+	echo "Erro: Falha na execução." >&2
+	exit 1
+fi
+
+	
+GetSystemInfo()
+{
+
+cat > $FILE << EOF
+=======  Sistema Operacional ======
+Usuario: $USER
+Nome do Computador: $(hostname)
+Baseado no: $(cat /etc/*-release 2>/dev/null | grep "^NAME=" | cut -d'=' -f2 | tr -d '["]')
+Descrição: $(cat /etc/*-release 2>/dev/null | grep "^DISTRIB_DESCRIPTION=" | cut -d'=' -f2 | tr -d '"')
+Versão: $(cat /etc/*-release 2>/dev/null | grep "^VERSION=" | cut -d'=' -f2 | tr -d '"')
+Arquitetura: $(uname -i)
+Ambiente gráfico: $XDG_CURRENT_DESKTOP
+Site: $(cat /etc/*-release 2>/dev/null | awk -F'=' '/HOME_URL/ {print $2}' | tr -d '["]')
+Idioma: $(env | grep -i "^lang=" | cut -d'=' -f2 | cut -d'.' -f1 | sed 's/en_US/Inglês (USA)/' | sed 's/pt_BR/Português (Brasil)/')
+Ligado:$(uptime -p | sed 's/hours/horas/' | sed 's/minutes/minutos/'| sed 's/hour/Hora/' | sed 's/minute/minuto/' | sed 's/up//')
+Kernel: $(uname -r)
+Shell: $SHELL
+EOF
+cat >> $FILE << EOF
+============= Rede ================
+$(echo -e "Interface\tIP")
+$(for interface in $(ip addr show | grep "^[0-9]" | cut -d':' -f2 | grep -v "lo" | tr -d ' ')
+do 
+	echo -e "$interface\t\t$(ip address show $interface | grep "inet" | egrep -v "127.0.0.1\/8|inet6" | awk '{print $2}' | sed 's/\/[0-9][0-9]//')"
+done)
+EOF
+cat >> $FILE << EOF
+=========== Processador ===========
+Modelo:$(cat /proc/cpuinfo  | grep -m1 "model name" | cut -d':' -f2)
+Arquitetura: $(lscpu | grep -i "CPU op-mode(s)" | tr -d ' ' | cut -d':' -f2)
+N° de Núcleos: $(lscpu | grep -i "^CPU(s)" | tr -d ' ' | cut -d':' -f2)
+Clock mínimo: $(lscpu | grep -i "cpu min" | tr -d ' ' | cut -d':' -f2 | cut -d',' -f1) Mhz
+Clock máximo: $(lscpu | grep -i "cpu max" | tr -d ' ' | cut -d':' -f2 | cut -d',' -f1) Mhz
+L2 Cache: $(lscpu | grep -i "^L2 cache" | tr -d ' ' | cut -d ':' -f2)
+L3 Cache: $(lscpu | grep -i "^L3 cache" | tr -d ' ' | cut -d ':' -f2)
+Uso da CPU: $(ps aux --sort=%cpu | tail -n1 | awk '{print $3}')%
+============ Memória ===============
+Memória: $(free -h | awk '/Mem:/ {print $3}') [usada] - $(free -h | awk '/Mem:/ {print $2}') [total]
+Swap: $(free -h | awk '/Swap:/ {print $3}') [usada] - $(free -h | awk '/Swap:/ {print $2}') [total]
+=========== Video ==================
+Modelo:$(lspci | grep "VGA compatible" | cut -d':' -f3)
+========== Disco(s) ================
+$(echo -e "Disco\t\tInterface\tModelo")
+$(for disk in $(df | awk '{print $1}' | grep "^/dev/" | grep -v "loop" | tr -d '[0-9]' | sort | uniq)
+do
+	MODEL=$(udevadm info --name $disk | grep -i "id_model=" | cut -d'=' -f2)
+        HDINTERFACE=$(udevadm info --name $disk | grep -i "id_bus=" | cut -d'=' -f2)
+	echo -e "$disk\t$HDINTERFACE\t\t$MODEL"
+done)
+=========== Partições ==============
+Partição        Tamanho Usado   Disponível  Porcento  Montando
+$(df -h | sort | egrep "^\/dev\/" | awk '{print $1"\t"$2"\t"$3"\t"$4"\t\t"$5"    "$6}')
+EOF
+
+if [ $1 = "true" ]
+then
+cat >> $FILE << EOF
+=========== Processos ===============
+Aplicativos do usuário '$USER' em execução:
+$(ps -ux  | grep -vi "command" | awk '{print $11}' | xargs -n1 basename)
+EOF
+	# Se o arquivo existe e possue dados, lê seu conteúdo e exibe as informações.
+	if [ -e $FILE -a -s $FILE ]; then
+		cat $FILE | zenity --title="GnuUbuntu - $OPT_INFO_SYSTEM" \
+			--text-info \
+			--width 800 \
+			--height 600
+	else
+		zenity --error "Erro" \
+			--text="Não foi possível obter informações do sistema."
+	fi
+else
+	cat $FILE
+fi
+
+}
+
+
+UpdateSystem()
+{
+	declare -i RETVAL=
+	
+
+	# Chama  a rotina para verificar a conexão
+	CheckInternetConnection true
+	[[ $? -ne 0 ]] && return 1
+
+	# Passa a senha contida em 'PASS' 
+	# Atualiza a base de dados do 'apt-get' para novos repositórios.
+	# A saida de erro é direcionada para o arquivo de LOG de forma incremental
+	CMD="apt-get update"
+	echo $PASS | sudo -S -k apt-get -y update | CreateLOG | zenity --progress \
+						--title="Atualização" \
+						--text="Atualizando lista de repositórios." \
+						--pulsate \
+						--no-cancel \
+						--auto-close \
+						--auto-kill
+
+	# Corrige possiveis dependências de pacotes instalados.
+	CMD="apt-get install" 
+	echo $PASS | sudo -S -k apt-get  -y -f install | CreateLOG | zenity --progress \
+						--title="Atualização" \
+						--text="Corrigindo dependências." \
+						--pulsate \
+						--no-cancel \
+						--auto-close \
+						--auto-kill
+
+	# Realiza um 'upgrade' com as últimas atualizações disponíveis.
+	CMD="apt-get upgrade" 
+	echo $PASS | sudo -S -k apt-get  -y upgrade | CreateLOG | zenity --progress \
+						--title="Atualizando..." \
+						--text="Baixando e instalando atualizações." \
+						--no-cancel \
+						--pulsate \
+						--auto-close	
+	RETVAL=$?
+	
+	# Se RETVAL for igual a '0' o sistema foi atualizado com sucesso.
+	# Caso contrário, retorna o valor de RETVAL e sai da rotina.
+	if [ $RETVAL -eq 0 ]; then
+		zenity --info \
+			--title="Atualização" \
+			--text="Atualização realizada com sucesso." \
+			--timeout=3
+		return $RETVAL
+	else
+		zenity --error \
+			--title="Atualização" \
+			--text="Ocorreu um erro durante a atualização.\r\nClique em 'detalhes' para visualizar o 'log'." \
+			--cancel-label="Voltar"
+			--extra-button="Detalhes"
+
+		[[ $? -eq 1 ]] && ViewLOG
+
+		return $RETVAL 
+	fi
+		
+}
+
+CreateLOG()
+{
+
+	# Cria o arquivo, se ele já existir atualiza o timer.
+	# Altera o dono do arquivo de LOG 
+	touch $LOG
+
+	echo "==============================================" >> $LOG
+	echo "Comando: $CMD" >> $LOG
+	echo "[Evento]" >> $LOG
+	echo >> $LOG
+
+	# Le a entrada enviada, cria o formato e envia para o arquivo de LOG
+	while read line
+	do
+		echo "Data: $(date +%d-%m-%Y) - Hora: $(date +%H:%M:%S) - $line" >> $LOG
+	done
+	
+	CMD=
+
+}
+
+
+EnterRootPass()
+{
+	while true
+	do
+	
+		PASS=$(zenity --forms \
+				--title="Autenticação" \
+				--text="Sudo" \
+				--add-password="Senha:" \
+				--ok-label="Autenticar" \
+				--cancel-label="Sair")
+		
+		# Verifica qual botão usuário clicou
+		# Valor retornado em $? 
+		# 0 - Autenticar
+		# 1 - Sair
+		
+		RETVAL=$?	
+		
+		case $RETVAL in
+			0)
+				# Checa se senha informada não é nula.
+				if [ -z $PASS ]; then
+					zenity --warning \
+					--title="Atenção" \
+					--text="Insira a senha." \
+					--timeout=3
+				else
+					# Realiza teste de validação da senha
+					echo $PASS | sudo -S -k "ls" &>/dev/null
+					
+					RETVAL=$?
+					# Verifica o valor retornado na validação
+					# 0 - Senha válida
+					# <>0 - Senha inválida
+					if [ $RETVAL -ne 0 ]; then
+						zenity --error \
+							--title="Error" \
+							--text="Senha inválida." \
+							--timeout=3
+					else
+						# Sai do loop se a senha estiver correta
+						return $RETVAL
+					fi	
+				fi		
+				;;
+			*)
+				Main		
+				;;
+		esac
+	done
+			
+}
+
+CheckInternetConnection()
+{
+	#DNS Publico
+	declare -r DNS=8.8.8.8
+	
+	
+	if [ $1 = "true" ]
+	then
+		for PERCENT in $(seq 10 10 100)
+		do
+			echo $PERCENT
+			sleep 0.5
+		done | zenity --progress --title="Conexão" \
+				--text="Verificando sua conexão." \
+				--percentage=0 \
+				--no-cancel \
+				--auto-close
+	elif [ $1 = "false" ]
+	then
+		echo "Verificando sua conexão com a internet..."
+	fi
+	
+	IP=$(ip address show | grep "inet" | egrep -v "127.0.0.1\/8|inet6" | awk '{print $2}' | sed 's/\/[0-9][0-9]//')
+	
+	[[ -z $IP ]] && return 1
+	
+	# Testa a conectividade com a internet enviando 2 pacotes ao DNS Publico do google
+	ping -c2 -W2 $DNS &>/dev/null 
+	# Retorno do ping
+	RETVAL=$? 
+	
+	[[ $1 = "false" ]] && return $RETVAL
+		
+	# Caso ocorra erro no envio em um dos pacotes.
+	if [ $RETVAL -ne 0 ]; then
+		zenity --info \
+			--title="Conexão" \
+			--text="Sem conexão com a internet.\r\nVerifique sua conexão com a internet e tente novamente." 
+		return $RETVAL
+	fi
+
+	return $RETVAL
+	
+}
+
+CleanSystem()
+{
+	# Pasta lixeira
+	declare -r TRASH=$HOME/.local/share/Trash
+	
+	# Array do Menu
+	declare -a OPTION=([0]="Lixeira" [1]="Cache" [2]="Memória RAM" [3]="Pacotes obsoletos")
+
+	# Declarando as variaveis que iram receber as opções selecionadas
+	declare OPT=
+	declare OPTS=
+	
+
+	# Realiza um loop infinito até que seja selecionada uma opção ou até que o usuário volte ao menu principal
+	while true
+	do
+		# Cria o FORM com as opções contidas no array OPTION
+		OPTS=$(zenity --list --title="Limpeza" \
+					--text="Selecione os itens que deseja limpar:" \
+					--column="Opção" --column="Descrição" \
+					--checklist \
+					FALSE "${OPTION[0]}" \
+					FALSE "${OPTION[1]}" \
+					FALSE "${OPTION[2]}" \
+					FALSE "${OPTION[3]}" \
+					--ok-label="Limpar" \
+					--cancel-label="Voltar" \
+					--width 400 --height 220)
+	
+		# Pega o valor do botão
+		RETVAL=$?
+
+		# Se o valor retornado for '1' = 'voltar', imprime o retorno e volta para o menu principal
+		[[ $RETVAL -eq 1 ]] && return $RETVAL
+	
+		# Verifica se alguma opção foi selecionada, caso 'OPTS' esteja vazio, trata o erro e continua no loop, caso contrário sai do loop
+		if [ -z "$OPTS" ]; then
+			zenity --info --title "Informação" \
+					--text="Selecione uma opção."
+		else
+			break
+		fi
+	done			
+	
+	# Define o delimitador padrão na variavel de ambiente 'IFS'
+	# As opções retornadas em 'OPTS' são separadas pelo delimitador '|'
+	# Exemplo: opcao1|opcao2|opcao3
+	# Com o delimitador definido, separa os valores em um array para serem tratados individualmente.
+	IFS='|'
+	
+	# Zera o retorno
+	RETVAL=0
+	
+	# Faz um loop com os elementos contidos 'OPTS[@]' redirecionando o elemento do indice para a variável 'OPT' que por sua vez é avaliada
+	# pelo bloco 'case' que executa a função referente
+	for OPT in ${OPTS[@]}
+	do
+		case "$OPT" in
+			"${OPTION[0]}")
+				# Limpa a Lixeira
+				# Verifica se o arquivo existe e se é um diretório.
+				if [ -e $TRASH -a -d $TRASH ]; then
+					CMD="rm $TRASH"
+					echo $PASS | sudo -S -k rm -vrf $TRASH/* | CreateLOG 
+					sleep 2 | zenity --progress \
+						--title="Limpeza" \
+						--text="Limpando a lixeira." \
+						--pulsate \
+						--no-cancel \
+						--auto-close
+				fi
+				;;
+
+			"${OPTION[1]}")
+				# Cache
+				# Executa o comando para limpeza de cache
+				CMD="apt-get clean"
+				echo $PASS | sudo -S -k apt-get -y clean | CreateLOG 
+				
+				sleep 2 | zenity --progress \
+						--title="Limpeza" \
+						--text="Limpando cache de aplicativos baixados." \
+						--pulsate \
+						--no-cancel \
+						--auto-close 
+						 
+			;;
+
+			"${OPTION[2]}")
+				# Limpa a memória RAM
+				# Seta a variavel de sistema wm.drop_caches para liberação de memória			
+				CMD="sysctl -w vm.drop_caches"
+				echo $PASS | sudo -S -k  "sysctl -w vm.drop_caches=3" | CreateLOG 
+				sleep 2 | zenity --progress \
+						--title="Limpeza" \
+						--text="Limpando memória RAM." \
+						--pulsate \
+						--no-cancel \
+						--auto-close
+				
+			;;
+			
+			"${OPTION[3]}")
+				# Remove libs obsoletas
+				CMD="apt-get autoremove"
+				echo $PASS | sudo -S -k apt-get -y autoremove | CreateLOG | zenity --progress \
+													--title="Limpeza" \
+													--text="Removendo aplicativos obsoletos." \
+													--no-cancel \
+													--auto-close \
+													--pulsate
+			;;
+		esac 
+	done
+	
+	# Exibe o form de log		
+	zenity --info \
+		--title="Limpeza" \
+		--text="Limpeza realizada com sucesso.\r\nClique em 'detalhes' para visualizar o log" \
+		--extra-button="Detalhes"
+
+	[[ $? -eq 1 ]] && ViewLOG	
+}
+
+ViewLOG()
+{
+	zenity --text-info \
+		--title="LOG" \
+		--filename="$LOG" \
+		--auto-scroll \
+		--cancel-label="Voltar" \
+		--width=800 \
+		--height=600 
+}
+
+InstallWindowsManager()
+{
+
+	if [ $(cat /etc/*-release 2>/dev/null | grep "^ID=" | cut -d'=' -f2) != "ubuntu" ]; then
+		zenity --warning \
+			--title="Incompatibilidade" \
+			--text="Essa função não oferece suporte para a sua distribuição.\r\n(Somente Ubuntu).\r\nEm breve estaremos disponibilizando atualizações." \
+			--ellipsize
+		return 1
+	fi
+ 
+	# Cria um Array com elementos	
+	declare -a OPTION=([0]="MATE" [1]="KDE" [2]="GNOME" [3]="CINNAMON" [4]="XFCE")
+	
+	# Inicializa variaveis locais
+	declare OPT=
+	declare PKG=
+	declare RETVAL=
+	declare CMD=
+
+	# Faz loop infinito até que uma opção válida seja seleciona
+	while true
+	do
+		# Cria o FORM com menu contendo os elementos da Array OPTION
+		# Os elementos são separados por '|' e com o indice dos seus vetores.
+		OPT=$(zenity --forms --title="Instalar" \
+				--text="Gerenciador de Janelas" \
+				--add-combo="Ambiente:" \
+				--combo-values="${OPTION[0]}|${OPTION[1]}|${OPTION[2]}|${OPTION[3]}|${OPTION[4]}" \
+				--ok-label="Instalar" \
+				--cancel-label="Voltar")
+	
+		# Se o usuário clicar em voltar, sai da função
+		RETVAL=$?
+		[[ $RETVAL -eq 1 ]] && return $RETVAL
+	
+		# Verifica se um item válido foi selecionado
+		if [ -z $OPT ]; then
+			zenity --info \
+				--title="Informação" \
+				--text="Selecione uma opção."
+		else
+			break
+		fi
+	done
+
+	# Valida o item selecionado, atribuindo o valor a variável 'PKG' com o nome do pacote a ser instalado
+	# MATE     - ubuntu-mate-desktop
+	# KDE      - kubuntu-desktop
+	# GNOME    - ubuntu-gnome-desktop
+	# CINNAMON - cinnamon-desktop-environment
+	# XFCE     - xfce4 
+	case $OPT in
+		"${OPTION[0]}")
+			PKG="ubuntu-mate-*"
+			GUI="ubuntu-mate-desktop"
+			;;
+		"${OPTION[1]}")
+			PKG="kubuntu-*"
+			GUI="kubuntu-desktop"
+			;;
+		"${OPTION[2]}")
+			PKG="ubuntu-gnome-*"
+			GUI="ubuntu-gnome-desktop"
+			;;
+		"${OPTION[3]}")
+			PKG="cinnamon-*"
+			GUI="cinnamon-desktop-environment"
+			;;
+		"${OPTION[4]}")
+			PKG="xfce4*"
+			GUI="xfce4-panel"
+			;;
+	esac
+	
+	# Realiza a tentiva de lista o pacote e pegar seu retorno
+	dpkg -l $GUI &>/dev/null
+	RETVAL=$?
+	
+	# Se o valor de retorno foi igual '0', indica que o pacote está instalado, então inicia a validação da integridade do pacote.
+	if [ $RETVAL -eq 0 ]; then
+		# Quando um pacote é instalado corretamente recebe o indentificar 'ii' em seu status
+		# Se o status for válido, indica que o pacote já está instalado e não apresenta problemas.
+		# Sai da função e retorna ao menu
+		zenity --info \
+			--title="Informação" \
+			--text="O Ambiente '$OPT' já está instalado."
+		InstallWindowsManager
+	else
+		# Se o valor de retorno for diferente de '0', indica que o pacote não está instalando
+		# Exibe uma mensagem de confirmação para continuar com a instalação.
+		zenity --question \
+			--title="Instalação" \
+			--text="Deseja continuar com a instalação o Ambiente '$OPT'?" \
+			--ok-label="Sim" \
+			--cancel-label="Não" \
+			--default-cancel
+		
+		# Retorno do menu
+		RETVAL=$?
+
+		
+		if [ $RETVAL -eq 0 ]; then
+			# Verifica a conexão com a internet	
+			CheckInternetConnection true
+			[[ $RETVAL -eq 1 ]] && return $RETVAL
+
+			# Antes de iniciar a instalação é necessário realizar um update para atualizar o DB do apt-get.
+			CMD="apt-get update"
+			echo $PASS | sudo -S -k apt-get -y update | CreateLOG | zenity --progress \
+											--title="Atualizando" \
+											--text="Atualizando repositórios." \
+											--no-cancel \
+											--pulsate \
+											--auto-close
+
+			# Inicia a instalação do pacote.
+			# O LOG é criado e o comando tail retorna a última linha do arquivo de LOG
+			# para ser tratado pelo --text-info 
+			CMD="apt-get install"
+			echo $PASS | sudo -S -k apt-get -y install $PKG | CreateLOG | tail -fn1 $LOG | zenity --text-info \
+														--title="[$OPT] Instalando..." \
+														--auto-scroll \
+														--width=800 \
+														--height=600
+			
+			# Verifica se ocorreram dependências apos a instalação e tenta corrigi-las
+			CMD="apt-get -f install"
+			echo $PASS | sudo -S -k apt-get -f install | CreateLOG | zenity --progress \
+											--title="Atualização" \
+											--text="Verificando dependências pos-instalação." \
+											--no-cancel \
+											--auto-close \
+											--pulsate 
+			
+			# Pega o retorno do comando apt-get -f install
+			RETVAL=$?
+			
+			
+			if [ $RETVAL -eq 0 ]; then
+				# Se o valor retornado for '0' indica que a instalação foi concluida com sucesso
+				# Exibe a mensagem de exito ao usuário	
+				zenity --info \
+					--title="Informação" \
+					--text="Instalação do ambiente '$OPT' realizada com sucesso."
+			else
+				# Se o valor retornado for diferente de '0' indica que ocorream erros durante a instalação
+				# Uma mensagem é enviada ao usuário com opção 'detalhes' para maiores informações.
+				zenity --error \
+					--title="Erro" \
+					--text="Ocorreu um erro(s) durante a instalação do ambiente $OPT.\r\nClique em 'detalhes' para ver o 'log'." \
+					--extra-button="Detalhes"
+
+				# Se o usuário clicar no botão 'detalhes'
+				[[ $? -eq 1 ]] && ViewLOG
+			fi
+				
+		else
+			# Sai da função se não houver internet.
+			return $RETVAL
+		fi	
+	fi
+	
+
+}
+
+ResetVal()
+{
+	unset PASS
+
+	rm -f /tmp/win.tmp &>/dev/null
+	rm -f /tmp/win2.tmp &>/dev/null
+	rm -f /tmp/com.tmp &>/dev/null
+	rm -f $PID
+	rm -f $FILE
+	exit 1
+}
+
+CheckBackupField()
+{
+
+			# Se a hora informada não for válida, exibe a mensagem de erro e retorna
+			# Chama a função 'WinConfBackup' passando o valor 'false', com isso, diz para a função
+			# armazenar os valores nas variaveis que foram inseridos pelo usuário
+			if [[ ! $(date +%H:%M -d $DT_HOUR) ]] || [[ ! $(echo $DT_HOUR | egrep '^[0-9]{2}[:]{1}[0-9]{2}$') ]]; then
+				zenity --error --title="Erro" \
+						--text="[Hora]: '$DT_HOUR'. Formato da hora inválido." \
+						--ellipsize
+			
+				WinConfBackup false
+			fi
+		
+			# Se nenhuma das opções contidas em 'Executar:' não for seleciona, exibe mensagem de erro e retorna
+			if [ -z "$CB_REPEAT_EXEC" ]; then
+				zenity --error --title="Erro" \
+						--text="Selecione o periodo de execução." \
+						--ellipsize
+				WinConfBackup false
+			fi
+
+			# Se a opção seleciona for 'Semanalmente', verifica se nenhum dia da semana foi marcado
+			# Exibe a mensagem de erro e retorna
+			if [ "$CB_REPEAT_EXEC" = "Semanalmente" ]; then
+				[[ $CHK_MONDAY = FALSE ]] && \
+				[[ $CHK_TUESDAY = FALSE ]] && \
+				[[ $CHK_WEDSDAY = FALSE ]] && \
+				[[ $CHK_THUSDAY = FALSE ]] && \
+				[[ $CHK_FRIDAY = FALSE ]] && \
+				[[ $CHK_SATURDAY = FALSE ]] && \
+				[[ $CHK_SUNDAY = FALSE ]] && { \
+					zenity --error --title="Erro" \
+						--text="Marque o(s) dia(s) da semana." \
+						--ellipsize
+					WinConfBackup false
+				}
+			fi
+	
+			# Se uma das opções foi seleciona: "Uma vez", "Diariamente", "Mensalmente" ou "Anualmente". 
+			# Verifca se tem algum dia da semana marcado, exibe a mensagem de erro e retorna.
+			if [ "$CB_REPEAT_EXEC" = "Uma vez" -o "$CB_REPEAT_EXEC" = "Diariamente" -o \
+			     "$CB_REPEAT_EXEC" = "Mensalmente" -o "$CB_REPEAT_EXEC" = "Anualmente" ]; then
+				[[ $CHK_MONDAY = TRUE ]] || \
+				[[ $CHK_TUESDAY = TRUE ]] || \
+				[[ $CHK_WEDSDAY = TRUE ]] || \
+				[[ $CHK_THUSDAY = TRUE ]] || \
+				[[ $CHK_FRIDAY = TRUE ]] || \
+				[[ $CHK_SATURDAY = TRUE ]] || \
+				[[ $CHK_SUNDAY = TRUE ]] && { \
+					zenity --error --title="Erro" \
+							--text="Dias da Semana é incompativel com 'Executar: $CB_REPEAT_EXEC'" \
+							--ellipsize
+					WinConfBackup false
+				}
+			fi
+	
+			# Agendamentos diario e semanal não requer data.
+			# verifica a opção seleciona e se a data foi informada.
+			if [ "$CB_REPEAT_EXEC" = "Diariamente" -o "$CB_REPEAT_EXEC" = "Semanalmente" ]; then
+				if [ ! -z "$DT_DATE" ]; then
+					zenity --error --title="Erro" \
+							--text="Erro: [Executar]: $CB_REPEAT_EXEC, não requer data." \
+							--ellipsize 
+					WinConfBackup false
+			fi
+			fi	
+
+			# Verifica se o campo da 'Data' está em branco
+			if [ -z $DT_DATE ]; then
+				# Se o foi selecionado as opções "Uma vez", "Mensalmente" ou "Anualmente" o valor de 'Data' é obrigatório
+				# Exbibe a mensagem de erro e retorna
+				if [ "$CB_REPEAT_EXEC" = "Uma vez" -o "$CB_REPEAT_EXEC" = "Mensalmente" -o "$CB_REPEAT_EXEC" = "Anualmente" ]; then
+					zenity --error --title="Erro" \
+						--text="Erro: [Executar]: $CB_REPEAT_EXEC, requer data." \
+						--ellipsize 
+					WinConfBackup false
+				fi
+
+			# Se o formato da data for inválido, exibe a mensagem de erro e retorna.
+			elif [[  ! $(date +%m/%d -d $DT_DATE) ]] || [[ ! "$(echo $DT_DATE | egrep "^[0-9]{2}[/]{1}[0-9]{2}$")" ]]; then
+	
+				zenity --error --title="Erro" \
+						--text="[Data]: '$DT_DATE'. Formato da data inválido." \
+						--ellipsize
+				WinConfBackup false
+			fi
+		
+			# Se o usuário não definiu os arquivos para backup exibe a mensagem de erro e retorna
+			if [ -z "$MDIR_FOLDERS" -a -z "$MFL_FILES" ]; then
+				zenity --error --title="Erro" \
+						--text="Selecione diretório(s) ou arquivo(s) para backup." \
+						--ellipsize
+				WinConfBackup false
+			fi
+			
+			# Se o campo nomenclatura estiver vazio	
+			if [ -z "$TXT_NOMENCLATURE" ]; then
+				zenity --error --title="Erro" \
+						--text="[Nomenclatura]: Informe a nomenclatura para o arquivo de backup." \
+						--ellipsize
+				WinConfBackup false
+			# Verifica se já existe um script com a momenclatura informada.
+			elif [ $EXEC_SCRIPT_NOW = true -a -e "$BKP_SCRIPT_DIR/$TXT_NOMENCLATURE.sh" ];then
+				source "$BKP_SCRIPT_DIR/$TXT_NOMENCLATURE.sh"
+				unset IFS
+				WinConfBackup false
+			elif [ -e "$BKP_SCRIPT_DIR/$TXT_NOMENCLATURE.sh" ]; then
+				zenity --error --title="Erro" \
+						--text="[Nomenclatura]: '$TXT_NOMENCLATURE'. Agendamento já existe." \
+						--ellipsize
+				WinConfBackup false
+			fi 
+			
+}
+
+WinConfBackup()
+{
+	# Inicia as variaveis locais
+
+	declare DATA
+	declare RESETVAL=$1
+	
+	EXEC_SCRIPT_NOW=false
+
+	RO_USER=$USER
+	
+	# Template contendo os valores default de cada campo 
+	# A variavel 'RESETVAL' define se os valores inseridos nos campos devem ser salvos
+	# O valor 'true' ou 'false' é passado para função 'WinConfBackup' 
+	# Quando o valor 'RESETVAL' é igual a true, limpa o conteúdo das variaveis atribuindo posteriormente os valores padrões.
+	# Caso contrário, as variáveis ficam na memória e seus valores restaurados.
+	if [ $RESETVAL = true ]; then	
+		DT_HOUR="$(date +%H:%M)"
+		CB_REPEAT_EXEC='!Uma vez!Diariamente!Semanalmente!Mensalmente!Anualmente' 
+		DT_DATE=""
+		MDIR_FOLDERS=""
+		MFL_FILES=""
+		DIR_SAVE_FOLDER="$HOME"
+		TXT_NOMENCLATURE="MeuBackup"
+		CHK_MONDAY=FALSE
+		CHK_TUESDAY=FALSE
+		CHK_WEDSDAY=FALSE
+		CHK_THUSDAY=FALSE
+		CHK_FRIDAY=FALSE
+		CHK_SATURDAY=FALSE
+		CHK_SUNDAY=FALSE
+		CHK_SEND_NOTIFICATION=TRUE
+		CHK_SHUTDOWN=FALSE
+		TXT_COMMENT="Digite aqui os comentários do backup."
+	else
+		STR1=
+		STR2=
+		
+		# Salva a lista padrão e reorganiza os itens, colocando no topo da lista o valor selecionado pelo usuário.
+		TMP_CB_REPEAT_EXEC='!Uma vez!Diariamente!Semanalmente!Mensalmente!Anualmente' 
+		STR2=$(echo ${TMP_CB_REPEAT_EXEC/$CB_REPEAT_EXEC/} | sed 's/!!/!/g')
+		STR1=$CB_REPEAT_EXEC'!'
+		CB_REPEAT_EXEC=$STR1$STR2
+	fi
+
+	# Cria a janela com layout dos campos de dados a serem inseridos pelo usuário
+	# Cada campo é definido com seu valor padrão contido nas respectivas variaveis,
+	# que são aplicadas no final de cada '--field'.
+	# O usuário ao clicar nos botões 'Agendar' ou 'Executar agora' a variável
+	# 'DATA' recebe o valor de todos os campos separados por pipe "|"
+	DATA=$(yad --form \
+		--title="Agendamento e execução de Backup" \
+		--center \
+		--field='Usuario:':RO "$RO_USER" \
+        	--field='':LBL '' \
+        	--field='<b>Agendamento:</b>':LBL '' \
+   	     	--date-format="%m/%d" \
+	        --field="Executar:":CB "$(echo $CB_REPEAT_EXEC)" \
+		--field="Hora:" "$DT_HOUR" \
+	        --field="Data:":DT "$DT_DATE" \
+		--field='':LBL '' \
+	        --field="<b>Backup:</b>":LBL '' \
+		--field="Pasta(s):":MDIR "$(echo $MDIR_FOLDERS)" \
+	        --field="Arquivo(s):":MFL "$(echo $MFL_FILES)" \
+	        --field="Salvar backup em:":DIR "$DIR_SAVE_FOLDER" \
+		--field='':LBL '' \
+		--field="Nomenclatura:" "$TXT_NOMENCLATURE" \
+		--field='Computador':RO "$HOSTNAME" \
+		--field='':LBL '' \
+		--field="<b>Dias da Semana:</b>":LBL '' \
+	        --field="Segunda-feira":CHK $CHK_MONDAY \
+	        --field="Terça-feira":CHK $CHK_TUESDAY \
+	        --field="Quarta-Feira":CHK $CHK_WEDSDAY \
+		--field="Quinta-feira":CHK $CHK_THUSDAY \
+		--field="Sexta-Feira":CHK $CHK_FRIDAY \
+		--field="Sábado":CHK $CHK_SATURDAY \
+		--field="Domingo":CHK $CHK_SUNDAY \
+		--columns=2 \
+		--field="Comentários:":TXT "$TXT_COMMENT" \
+		--field="Enviar notificação de inicio e término do backup.":CHK $CHK_SEND_NOTIFICATION \
+		--field="Desligar computador após o backup":CHK $CHK_SHUTDOWN \
+		--button='Novo!gtk-new':5 \
+		--button='Agendar!gtk-ok':0 \
+		--button='Executar agora!gtk-execute':10 \
+		--button='Gerenciar agendamentos!gtk-index':20 \
+		--button='Sair!gtk-quit':30 \
+		--fixed --height=500 --width=500)  
+
+	RETVAL=$?
+	
+	# Incia cada variável com o valor filtrado nos campos contidos em 'DATA'.
+	# Utilizando o comando 'cut' e o delimitador '|' os campos são separados
+	# e com '-f[campo]' pega o valor referente.
+	RO_USER=$(echo $DATA | cut -d'|' -f1)
+	DT_HOUR=$(echo $DATA | cut -d'|' -f5)
+	CB_REPEAT_EXEC=$(echo $DATA | cut -d'|' -f4)
+	DT_DATE=$(echo $DATA | cut -d'|' -f6)
+	MDIR_FOLDERS=$(echo $DATA | cut -d'|' -f9)
+	MFL_FILES=$(echo $DATA | cut -d'|' -f10)
+	DIR_SAVE_FOLDER=$(echo $DATA | cut -d'|' -f11)
+	TXT_NOMENCLATURE=$(echo $DATA | cut -d'|' -f13)
+	CHK_MONDAY=$(echo $DATA | cut -d'|' -f17)
+	CHK_TUESDAY=$(echo $DATA | cut -d'|' -f18)
+	CHK_WEDSDAY=$(echo $DATA | cut -d'|' -f19)
+	CHK_THUSDAY=$(echo $DATA | cut -d'|' -f20)
+	CHK_FRIDAY=$(echo $DATA | cut -d'|' -f21)
+	CHK_SATURDAY=$(echo $DATA | cut -d'|' -f22)
+	CHK_SUNDAY=$(echo $DATA | cut -d'|' -f23)
+	TXT_COMMENT="$(echo $DATA | cut -d'|' -f24)"
+	CHK_SEND_NOTIFICATION=$(echo $DATA | cut -d'|' -f25)
+	CHK_SHUTDOWN=$(echo $DATA | cut -d'|' -f26)
+			
+
+	case $RETVAL in
+		0)
+			# Função: "AGENDAR"
+			#
+			CheckBackupField
+			# Se todos os campos foram validados, exbibe a menasgem de confirmação.
+			zenity --question \
+				--title="Agendamento" \
+				--text="Será criando um registro de agendamento para o seu backup\r\nDeseja continuar ?" \
+				--ok-label="Sim" \
+				--cancel-label="Voltar" \
+				--ellipsize	
+				
+				# Variavel boolean 'EXEC_SCRIPT_NOW' passa para a função ScheduleBackup se o script é
+				# salvo - false
+				# temporário - true 
+				[[ $? -eq 0 ]] && (EXEC_SCRIPT_NOW=false && ScheduleBackup) || WinConfBackup false
+				WinConfBackup true
+			;;
+		5)
+			WinConfBackup true
+			;;
+
+		10)
+			#### Função 'EXECUTAR AGORA' #####
+			EXEC_SCRIPT_NOW=true
+			CheckBackupField
+			ScheduleBackup
+			WinConfBackup false
+			;;
+		20)
+			ManagerBackup true
+			;;
+		*)
+			Main
+			;;
+	esac
+	
+}
+
+ScheduleBackup()
+{
+	
+	# Inicia as variaveis locais
+									# Separa os campos pelos delimitadores ':' e pega o valor do campo
+	declare MIN=$(echo $DT_HOUR | cut -d':' -f2)			# Hora
+	declare HOUR=$(echo $DT_HOUR | cut -d':' -f1)			# Minutos
+	declare MONTH=$(echo $DT_DATE | cut -d'/' -f1)			# Mês
+	declare DAY=$(echo $DT_DATE | cut -d'/' -f2)			# Dia
+	declare EXECUTE="$CB_REPEAT_EXEC"
+	declare	DAYWEEK
+	declare NOMENCLATURE=$(echo "$TXT_NOMENCLATURE" | tr -d ' ')  
+	declare SCRIPT_FILE="$NOMENCLATURE.sh"
+	declare TAR_FILE="$NOMENCLATURE.tar.gz" 
+	
+	# O Agendamento é realizado via daemon "CRONTAB". Será necessário ralizar a conversão para o padrão 'CRON'
+	# Se a o dia e mês não for informado converte para '*', que representa todos.	
+	[[ -z $MONTH ]] && MONTH='*' 
+	[[ -z $DAY ]] && DAY='*'
+		 
+	# Se o modo de execução for semanal, verifica os checkbox selecionados, aplica a conversão e ingrementa a variavel DAYWEEK.
+	# 0 - Domingo, 1 - Segunda-Feira, 2 - Terça-Feira, 3 - Quarta-Feira, 4 - Quinta-Feira, 5 - Sexta-Feira, 6 - Sábado.
+	# Insere o delimitador ',' que é lido pelo CRONTAB
+	if [ "$EXECUTE" = "Semanalmente" ]; then
+		[[ $CHK_SUNDAY = TRUE ]] && DAYWEEK=$DAYWEEK"0,"
+		[[ $CHK_MONDAY = TRUE ]] && DAYWEEK=$DAYWEEK"1,"
+		[[ $CHK_TUESDAY = TRUE ]] && DAYWEEK=$DAYWEEK"2,"
+		[[ $CHK_WEDSDAY = TRUE ]] && DAYWEEK=$DAYWEEK"3,"
+		[[ $CHK_THUSDAY = TRUE ]] && DAYWEEK=$DAYWEEK"4,"
+		[[ $CHK_FRIDAY = TRUE ]] && DAYWEEK=$DAYWEEK"5,"
+		[[ $CHK_SATURDAY = TRUE ]] && DAYWEEK=$DAYWEEK"6,"
+		# Apaga a virgula do final da variavel
+		DAYWEEK=$(echo $DAYWEEK | sed 's/,$//g')
+	else
+		# Aplica '*' se a variavel estiver vazia
+		DAYWEEK='*'
+	fi
+	
+	# Se o modo de execução for 'Mensal' ou 'Anual' aplica a expressão regular referente.
+	[[ $EXECUTE = "Mensalmente" ]] && MONTH="*\1"
+	[[ $EXECUTE = "Anualmente" ]] && MONTH="*\12"
+
+	# Se não for inserido um comentário, aplica o padrão  "Backup: Filename - Destino: Destino"
+	[[ "$TXT_COMMENT" = "Digite aqui os comentários do backup." ]] || [[ -z "$TXT_COMMENT" ]] && TXT_COMMENT="Destino: $DIR_SAVE_FOLDER"
+	# Armazena nome do arquivo temporário
+	TMP_FILE=script.$$.tmp
+	
+	# Se a opção escolhida for 'Executar agora', armazena o valor de TMP_FILE em SCRIPT_FILE_NAME
+	# Caso contrário, armazena em SCRIPT_FILE_NAME o script
+	[[ $EXEC_SCRIPT_NOW = true ]] && SCRIPT_FILE_NAME="$BKP_SCRIPT_DIR/$TMP_FILE" || SCRIPT_FILE_NAME="$BKP_SCRIPT_DIR/$SCRIPT_FILE"
+
+
+# Gera um script com o nome contido em SCRIPT_FILE_NAME.
+# O script gerado automaticamente contem os valores dos campos preenchidos pelo usuário
+# que irá realizar os procedimentos de backup e log
+cat > "$SCRIPT_FILE_NAME" << EOF
+#!/bin/bash
+
+# Script de backup
+# Gerado em: $(date "+%d/%m/%Y - %H:%M:%S")
+#
+# Agendado
+# Backup: $TAR_FILE
+# Modo: $EXECUTE
+# Data: $DT_DATE Hora: $DT_HOUR
+#
+# Arquivo(s):
+$(echo $FOLDERS $FILES | tr ' ' '\n' | sed 's/^/# /g')
+#
+# Destino (Backup): $DIR_SAVE_FOLDER
+
+declare -r sLOG=$BKP_SCRIPT_LOG/bkp.log
+declare -r DEST="$DIR_SAVE_FOLDER"
+declare -r sFILE="$TAR_FILE"
+declare -r TYPE="$EXECUTE"
+
+declare -x XAUTHORITY=$XAUTHORITY
+declare -x DISPLAY=$DISPLAY
+declare -r NOTIFICATION=$CHK_SEND_NOTIFICATION
+declare -r SHUTDOWN=$CHK_SHUTDOWN
+declare -r FOLDERS="$MDIR_FOLDERS"
+declare -r MFILES="$MFL_FILES"
+
+declare RETVAL
+declare CONT=0
+declare dir
+declare file
+
+echo "============================================" >> \$sLOG
+echo "Tipo: \$TYPE" >> \$sLOG
+echo "Data: \$(date "+%d/%m/%Y")" >> \$sLOG
+echo "Iniciado em: \$(date "+%H:%M:%S")" >> \$sLOG
+echo "Detalhes:" >> \$sLOG
+
+
+if [ \$NOTIFICATION = TRUE ]; then
+
+	notify-send  "$SCRIPT" "Backup iniciado: $NOMENCLATURE" \\
+			--urgency=normal \\
+			--app-name="GnuLinux" \\
+			--icon=$NICON &> /dev/null
+fi
+
+IFS='!'
+
+for dir in \$FOLDERS
+do
+	DIR[CONT]="\$dir"
+	((CONT++))
+done
+
+CONT=0
+
+for file in \$MFILES
+do
+	FILES[CONT]="\$file"
+	((CONT++))
+done
+
+IFS=''
+
+tar -z -v -c --recursion -p -P --file="\$DEST/\$sFILE" "\${DIR[@]}" "\${FILES[@]}" &>> \$sLOG 
+
+RETVAL=\$?
+
+if [ \$NOTIFICATION = TRUE ]; then
+	if [ \$RETVAL -eq 0 ]; then
+		notify-send  "$SCRIPT" "Backup: '$NOMENCLATURE'. Realizado com sucesso." \\
+			--urgency=normal \\
+			--app-name="GnuLinux" \\
+			--icon=$NICON &> /dev/null
+	else
+		notify-send  "$SCRIPT" "Erro(s) durante a criação do backup: '$NOMENCLATURE'. Verique o 'log' para mais detalhes." \\
+			--urgency=normal \\
+			--app-name="GnuLinux" \\
+			--icon=$NICON &> /dev/null
+	fi
+fi
+
+echo >> \$sLOG
+echo "Terminado em: \$(date "+%H:%M:%S")" >> \$sLOG
+echo "Arquivo: \$sFILE" >> \$sLOG
+echo "Tamanho: \$(du -hs "\$DEST/\$sFILE" | awk '{print \$1}')" >> \$sLOG
+
+# FIM
+EOF
+
+# Dá permissão de execução
+chmod +x "$SCRIPT_FILE_NAME"
+
+# Se a opção for 'Executar agora'. 
+# Executa o script e logo após exclui.
+if [ $EXEC_SCRIPT_NOW = true ]; then
+	source "$SCRIPT_FILE_NAME" 
+	rm -f "$SCRIPT_FILE_NAME"
+	EXEC_SCRIPT_NOW=false
+	WinConfBackup true 
+fi	
+
+# Se a oção for 'Agendar'
+# Incrementa o arquivo 'profile.crontab' com as configurações de agendamento.
+echo -e "Backup: $TAR_FILE - $TXT_COMMENT" | sed 's/^/# /g' >> $CRONTAB_FILE
+echo "$MIN $HOUR $DAY $MONTH $DAYWEEK $SCRIPT_FILE_NAME" >> $CRONTAB_FILE
+echo >> $CRONTAB_FILE
+
+# Carrega o arquivo 'profile.crontab'
+crontab -u $USER $CRONTAB_FILE
+
+# Envia a mensagem de sucesso para o usuário.
+zenity --info --title="Informação" --text="Agendamento '$TXT_NOMENCLATURE' realizado com sucesso."
+
+}
+
+ManagerBackup()
+{
+	declare DATE
+	declare HOUR
+	declare COMMENT
+	declare INDEX
+	declare SCHEDULE
+	declare OPT
+	declare schedule
+	declare RETVAL
+	declare SCRIPT_FILE
+
+	INDEX=1
+
+	crontab -u $USER $CRONTAB_FILE
+
+	crontab -l | grep "^# Backup:" | sed 's/# //g' > /tmp/com.tmp
+	crontab -l | egrep -v "^#|^$" | awk '{print $2":"$1" "$4"/"$3" "$5" "$6}'  |  sed 's/*\\12/Todos/g'  | sed 's/*\\1/Todos/g' | sed 's/*/Nenhum/g' > /tmp/win2.tmp
+
+	cat -n /tmp/win2.tmp > /tmp/win.tmp
+	sed -i 's/\\/ /g' /tmp/win.tmp
+
+	if [ $1 = "false" ]; then
+		echo "Agendamentos de Backup:"
+		echo 
+		echo -e "[Indice];[Hora];[Data];[Dias da Semana];[Script]"
+		echo 
+		cat /tmp/win.tmp | awk '{print "["$1"];["$2"];["$3"];["$4"];["$5"]"}'
+		return 
+	fi
+
+	for schedule in $(cat /tmp/win.tmp)
+	do
+		SCHEDULE[$INDEX]="$schedule"
+		((INDEX++))
+	done
+
+	OPT=$(yad --title="Gerenciamento de backups" \
+		--list \
+		--column="Indice":TXT \
+		--column="Hora":TXT \
+		--column="Data":TXT \
+		--column="Dia da semana":TXT \
+		--column="Script":TXT \
+		--button='Excluir!gtk-delete':10 \
+		--button='Visualizar!gtk-select-all':0 \
+		--button='Adicionar!gtk-add':30 \
+		--button='Sair!gtk-quit':1 \
+		--center \
+		"${SCHEDULE[@]}" \
+		 --separator="|" \
+		 --width=800 --height=600)
+		
+	RETVAL=$?	
+	
+	if [[ ! -z $OPT ]]; then
+		SCRIPT_FILE=$(echo $OPT | cut -d"|" -f5)
+		DT_HOUR=$(echo $OPT | cut -d"|" -f2)
+		CB_REPEAT_EXEC=$(cat $(echo $OPT | cut -d "|" -f5) | grep "TYPE=" | cut -d'=' -f2 | tr -d '"') 
+		[[ $(echo $OPT | cut -d"|" -f3) = "Todos" ]] && DT_DATE="" || DT_DATE=$(echo $OPT | cut -d"|" -f3)
+		MDIR_FOLDERS=$(cat $(echo $OPT | cut -d"|" -f5) | grep "FOLDERS=" | cut -d'=' -f2 | tr -d '"')
+		MFL_FILES=$(cat $(echo $OPT | cut -d"|" -f5) | grep "MFILES=" | cut -d'=' -f2 | tr -d '"')
+		DIR_SAVE_FOLDER=$(cat $(echo $OPT | cut -d"|" -f5) | grep "DEST=" | cut -d'=' -f2 | tr -d '"')
+		TXT_NOMENCLATURE=$(basename $(echo $OPT | cut -d"|" -f5) | sed 's/.sh$//g')
+		LINE=$(echo $OPT | cut -d"|" -f1)
+		TXT_COMMENT=$(cat /tmp/com.tmp | awk "NR==$LINE {print}" | sed 's/^Backup: //g')
+		CHK_SEND_NOTIFICATION=$(cat $(echo $OPT | cut -d"|" -f5) | grep "NOTIFICATION=" | cut -d'=' -f2)
+		CHK_SHUTDOWN=FALSE
+		
+	elif [ $RETVAL -eq 0 -o $RETVAL -eq 10 ]; then
+		zenity --info \
+			--title="Informação" \
+			--text="A lista está vazia." \
+			--ellipsize \
+			--timeout=2
+			WinConfBackup true
+	fi
+
+	case $RETVAL in
+		0)
+
+			[[ $(echo $OPT | cut -d"|" -f4) = "Nenhum" ]] && {
+				CHK_MONDAY=FALSE
+				CHK_TUESDAY=FALSE
+				CHK_WEDSDAY=FALSE
+				CHK_THUSDAY=FALSE
+				CHK_FRIDAY=FALSE
+				CHK_SATURDAY=FALSE
+				CHK_SUNDAY=FALSE
+			} || {
+	
+				weeks=$(echo $OPT | cut -d"|" -f4)
+	
+				IFS=','
+
+				for week in $weeks
+				do
+					case $week in 
+						0)
+							CHK_SUNDAY=TRUE
+							;;
+						1)
+							CHK_MONDAY=TRUE
+							;;
+						2)
+							CHK_TUESDAY=TRUE
+							;;
+						3)
+							CHK_WEDSDAY=TRUE
+							;;
+						4)
+							CHK_THUSDAY=TRUE
+							;;
+						5)
+							CHK_FRIDAY=TRUE
+							;;
+						6)
+							CHK_SATURDAY=TRUE
+							;;
+					esac
+				done
+			}	
+			;;
+		1)
+			WinConfBackup false
+			;;
+		10)
+			DeleteSchedule $SCRIPT_FILE "$TXT_COMMENT" $TXT_NOMENCLATURE
+			;;
+		30)
+			WinConfBackup true
+			;;
+	esac		
+	
+	unset IFS
+	WinConfBackup false
+}
+
+DeleteSchedule()
+{
+	declare TMP_SCRIPT=$1
+	declare TMP_COMMENT="$2"
+	declare TMP_NOMENCLATURE=$3
+	declare RETVAL
+	
+
+	zenity --question \
+		--title="Excluir" \
+		--text="Deseja realmente excluir '$TMP_NOMENCLATURE' ?" \
+		--ok-label="Sim" \
+		--cancel-label="Não" \
+		--default-cancel \
+		--ellipsize
+	
+	RETVAL=$?
+
+	case $RETVAL in
+		0)
+			SWAP="$(echo $TMP_SCRIPT | sed 's/\//\\\//g')"
+			sed -i "/$SWAP/d" $CRONTAB_FILE
+			
+			SWAP="$(echo $TMP_COMMENT | sed 's/\//\\\//g')"
+			sed -i "/$SWAP/d" $CRONTAB_FILE
+			
+			sed -i '/^$/d' $CRONTAB_FILE
+		
+			rm -f $TMP_SCRIPT
+		
+			crontab -u $USER $CRONTAB_FILE
+
+			zenity --info \
+				--title="Confirmação" \
+				--text="Agendamento excluido com sucesso." \
+				--timeout=2 \
+				--ellipsize 
+			
+			;;
+	esac
+
+	ManagerBackup true
+}
+
+RegisterAPP()
+{
+	declare -r ICON=GnUbuntu.jpg
+	declare -r FILE_DESKTOP=GnUbuntu.desktop
+	declare -r HOME_APPLICATION=$HOME/.local/share/applications
+	declare -r USER_APPLICATION=/usr/share/applications
+	declare -r USER_APP_INSTALL=/usr/share/app-install/desktop
+	declare -r ICON_128x128=/usr/share/icons/hicolor/128x128/apps
+	declare -r USER_BIN=/usr/bin
+	declare -r USER_CONF_DIR="$HOME/.config/user-dirs.dirs"
+	declare -r DESKTOP="$(cat $USER_CONF_DIR | grep XDG_DESKTOP_DIR | cut -d'=' -f2 | tr -d '"' | sed 's/$HOME\///g')"
+
+	if [ -e $USER_BIN/$SCRIPT ]; then
+		echo "'$SCRIPT' já está instalado."
+		return 0
+	fi
+	
+	[ ! -e $HOME_APPLICATION ] && mkdir $HOME_APPLICATION 
+	
+cat > $HOME_APPLICATION/$FILE_DESKTOP << EOF
+[Desktop Entry]
+Version=1.0
+Name=$SCRIPT
+GenericName=Utilitário para update, backup e configurações
+Comment=Utilitário de Limpeza, Atualização, Upgrade, Agendamento de backup e OS Boot.
+Type=Application
+Exec=$SCRIPT
+Icon=$ICON_128x128/GnUbuntu.jpg
+Terminal=false
+Categories=Utility;
+EOF
+
+	echo -n "Instalando 'GnUbuntu'..."
+	cp -p  $HOME_APPLICATION/$FILE_DESKTOP "$HOME/$DESKTOP" &>/dev/null
+	sudo chmod 755 "$HOME/$DESKTOP/$FILE_DESKTOP" &>/dev/null
+	sudo chown $SUDO_USER.$SUDO_USER "$HOME/$DESKTOP/$FILE_DESKTOP" &>/dev/null
+	
+
+	sudo cp $HOME_APPLICATION/$FILE_DESKTOP $USER_APPLICATION &>/dev/null
+	sudo cp $HOME_APPLICATION/$FILE_DESKTOP $USER_APP_INSTALL/"GnUbuntu:$FILE_DESKTOP" &> /dev/null
+
+	sudo cp $PWD/$ICON $ICON_128x128 &>/dev/null
+	sudo chmod 644 $ICON_128x128/$ICON &>/dev/null
+
+	sudo cp $PWD/$SCRIPT $USER_BIN &>/dev/null
+	sudo chmod 755 $USER_BIN/$SCRIPT &>/dev/null
+ 
+	sleep 1
+	[ $? -eq 0 ] && echo -e "\e[00;32m[OK]\e[00;m" || echo -e "\e[00;31m[FALHA]\e[00;m" 
+
+	return $?
+
+}
+
+UnRegisterAPP()
+{
+
+	declare -r ICON=GnUbuntu.jpg
+	declare -r FILE_DESKTOP=GnUbuntu.desktop
+	declare -r HOME_APPLICATION=$HOME/.local/share/applications
+	declare -r USER_APPLICATION=/usr/share/applications
+	declare -r USER_APP_INSTALL=/usr/share/app-install/desktop
+	declare -r ICON_128x128=/usr/share/icons/hicolor/128x128/apps
+	declare -r USER_BIN=/usr/bin
+	declare -r USER_CONF_DIR="$HOME/.config/user-dirs.dirs"
+	declare -r DESKTOP="$(cat $USER_CONF_DIR | grep XDG_DESKTOP_DIR | cut -d'=' -f2 | tr -d '"' | sed 's/$HOME\///g')"
+	
+	if [ ! -e $USER_BIN/$SCRIPT ]; then
+		echo "'$SCRIPT' Não está instalado."
+		return 0
+	fi
+	
+	echo -n "Removendo '$SCRIPT'..."
+
+	rm -f $HOME_APPLICATION/$FILE_DESKTOP &>/dev/null
+	rm -f $USER_APPLICATION/$FILE_DESKTOP &>/dev/null
+	rm -f "$HOME/$DESKTOP/$FILE_DESKTOP" &>/dev/null
+	rm -f $USER_APP_INSTALL/"GnUbuntu:$FILE_DESKTOP" &>/dev/null
+	rm -f $ICON_128x128/$ICON 
+	rm -f $USER_BIN/$SCRIPT &>/dev/null
+	
+	sleep 1
+	[ $? -eq 0 ] && echo -e "\e[00;32m[OK]\e[00;m" || echo -e "\e[00;31m[FALHA]\e[00;m" 
+
+	return $?
+
+}
+
+CreateUSBLive()
+{
+	[[ $1 = "true" ]] && IMAGE="$HOME"	
+
+	declare RETVAL
+	declare SELECT
+	declare USB
+	declare DISK_USB
+	declare SIZE
+	declare ISO9660="application/x-iso9660-image"
+	declare WAIT
+	declare DD_PID
+	declare DEV_USB
+	declare PERCENT
+	declare SDISK
+
+	DEV_USB=$(echo "$PASS" | sudo -S -k file -s /dev/sd[a-z]* 2>/dev/null | grep -o "^/dev/sd[a-z]*" | xargs -n1 udevadm info --name | egrep "ID_BUS|DEVNAME" | grep -B1 "ID_BUS=usb" | awk -F':' '{print $2}' | grep "DEVNAME" | cut -d'=' -f2 | uniq)
+
+	for DISK in $DEV_USB
+	do
+		SDISK=$SDISK$(echo "$PASS" | sudo 2>/dev/null -S -k fdisk -l $DISK | egrep -o "^Disk /dev/[a-z]{3}: [0-9]{,10}[,]{1}[0-9]{,10} [mMgG][iI][bB]" | sed 's/^Disk //g' | sed 's/$/!/g')
+			
+	done
+
+	DEV_USB=$(echo $SDISK | sed 's/!$//g')
+	
+	if [ -z $DEV_USB ]; then
+		zenity --info \
+			--title="Informação" \
+			--text="Não foi encontrado nenhum dispositivo 'usb' conectado no computador." \
+			--ellipsize 
+		Main
+	fi
+
+	SELECT=$(yad --form \
+		--title="GnUbuntu - USB bootável" \
+		--center \
+		--field="<b>Irá criar um disco usb bootável com o sistema operacional\r\ncontido na IMAGEM.\r\nInstruções:\r\n1 - Selecione o arquivo da imagem.\r\n2 - Escolha o dispositivo [USB] onde será gravado.\r\n3 - Clique no botão [Gravar].</b>":LBL '' \
+		--field="<b><span color='#ff0000'>[ATENÇÃO]: Este procedimento apagará todos os arquivos\r\narmazenados no seu dispositivo.</span></b>":LBL '' \
+		--field="":LBL '' \
+		--field="IMAGEM:":FL "$IMAGE" \
+		--field="USB:":CB "$DEV_USB" \
+		--button='Gravar!gtk-save':0 ''  \
+		--button='Sair!gtk-quit':1 '' \
+		--wrap)
+
+	RETVAL=$?
+	IMAGE="$(echo $SELECT | cut -d"|" -f4)"
+	USB=$(echo $SELECT | cut -d"|" -f5 | cut -d':' -f1)
+
+	case $RETVAL in
+		0)
+			if [ "$(file --mime-type "$IMAGE" | awk '{print $2}')" != $ISO9660 ]
+			then
+				zenity --error \
+					--title="Erro" \
+					--text="'$(basename "$IMAGE")': Tipo do arquivo incompatível." \
+					--timeout=2 \
+					--ellipsize
+				CreateUSBLive true
+			fi
+			
+			zenity --question \
+				--title="Atenção" \
+				--text="<span color='#ff0000'>[ATENÇÃO]: Todos os arquivos salvos no seu dispositivo serão apagados.</span>\r\n\r\nDeseja continuar ?"	\
+				--cancel-label="Não" \
+				--ok-label="Sim" \
+				--default-cancel \
+				--ellipsize
+			
+
+			[[ $? -ne 0 ]] && CreateUSBLive false
+	
+					
+			DISK_USB=$(echo "$PASS" | sudo -S -k fdisk -l $USB 2>/dev/null | grep "^Disk $USB" | awk '{print $5}')
+			SIZE=$(du "$IMAGE" | awk '{print $1}') 
+			
+			if [ $SIZE -ge $DISK_USB ]; then
+				zenity --warning \
+					--title="Atenção" \
+					--text="Capacidade do disco '$USB' insuficiente." \
+					--timeout=4 \
+					--ellipsize
+				CreateUSBLive false	
+			fi
+			
+			echo "$PASS" | sudo S -k umount $USB* 2>/dev/null | sleep 2 | zenity --progress \
+												--title="Desmontar" \
+												--text="Demonstando '$USB'..." \
+												--pulsate \
+												--no-cancel \
+												--auto-close
+			
+			if [ $? -eq 1 ]; then
+				zenity --error \
+					--title="Erro" \
+					--text="Não foi possível desmontar o dispositivo '$USB'" \
+					--ellipsize
+				
+				CreateUSBLive false
+			fi
+
+			CORES=$(lscpu | grep -i "^CPU(s):" | egrep -o "[0-9]{,2}$")
+			CORES=$((CORES*3))
+			
+			[ -z $CORES ] && CORES=2
+
+			SIZE=$(du -m "$IMAGE" | awk '{print $1}')
+			WAIT=$((SIZE/CORES/100))
+
+			echo "$PASS" | sudo -S -k dd if="$IMAGE" of=$USB bs=4M &
+			DD_PID=$(pidof dd)
+		
+			sleep 3	
+
+			for PERCENT in {1..100}
+			do	
+					[[ -z $(pidof dd) ]] && WAIT=0
+
+					echo $PERCENT
+					
+					echo "# Origem: $(basename "$IMAGE")\r\nDestino: $USB\r\n\r\nCopiando arquivos...$PERCENT% concluído." 
+					sleep $WAIT
+
+			done | yad --progress \
+					--image=/usr/share/icons/Adwaita/48x48/devices/media-removable.png \
+					--title="Gravando..." \
+					--fixed \
+					--center \
+					--percentage=0 \
+					--auto-close \
+					--button='Cancelar!gtk-cancel':1
+
+			if [ $? -eq 1 -o $? -eq 252 ]
+			then
+				echo "$PASS" | sudo -S -k kill -SIGTERM -SIGKILL $(ps aux | egrep "sudo -S -k dd if=$IMAGE of=$USB bs=4M|dd if=$IMAGE of=$USB bs=4M" | grep -v grep | awk '{print $2}')
+				echo "$PASS" | sudo -S -k kill -SIGTERM -SIGKILL $DD_PID
+				zenity --warning \
+					--title="Atenção" \
+					--text="O Processo foi cancelado pelo usuário." 
+					
+			else
+				notify-send "$SCRIPT" "Imagem: '$(basename "$IMAGE")' foi gravada com sucesso" \
+						--icon=$NICON \
+						--urgency=normal
+				zenity --info \
+					--icon-name=gtk-ok \
+					--title="Sucesso" \
+					--text="Gravação realizada com sucesso." \
+					--ellipsize
+			fi	
+			;;
+		*)
+			Main			
+			;;
+	esac
+
+	Main	
+}
+
+Main()
+{
+	# Se o pacote 'zenity' estiver ausente, solicita ao usuário a instalação.
+	if [ ! -x /usr/bin/zenity -o ! -x /usr/bin/yad ]; then
+		read -n1 -p "Pacotes requeridos 'zenity e yad'. deseja instalar? (S\n)" RESP
+		
+		# Reposta padrão 'S'
+		[[ -z $RESP ]] && RESP='S'
+	
+		case $RESP in
+			s|S)
+				# Inicia o download e instalação, caso ocorra algum erro sairá automaticamente do script
+				sudo apt-get -y install zenity yad || exit 1
+				;;
+			*)
+				echo
+				echo "$SCRIPT: Saindo..."
+				exit 0
+				;;
+		esac
+		
+	fi
+
+	if [ -e $BASE_DIR ]; then
+		if [ ! -r $BASE_DIR -o ! -w $BASE_DIR ]; then
+			echo -e "$SCRIPT: Erro: Não foi possível acessar os arquivos de configuração.\r\nVerifique as permissões do diretório '$BASE_DIR' e tente novamente." 
+			exit 1
+		fi
+	fi 
+	
+	[[ ! -e $BASE_DIR ]] && mkdir $BASE_DIR 
+	[[ ! -e $BKP_SCRIPT_DIR ]] && mkdir $BKP_SCRIPT_DIR
+	[[ ! -e $BKP_SCRIPT_LOG ]] && mkdir $BKP_SCRIPT_LOG
+	if [ ! -e $CRONTAB_FILE ]; then
+cat > $CRONTAB_FILE << EOF
+# profile.crontab
+#
+# Perfil de agendamento de backup gerado automaticamente.
+# Todos os agendamentos são inseridos neste arquivo, seguindo o padrão 'CRONTAB'.
+# ATENCAO: Não altere manualmente as configurações, isso pode comprometer a execução dos backups."
+# 
+# Padrão: Minuto Hora Dia Mes DiaDaSemana [Comando|script]
+#
+EOF
+fi
+	echo $$ > $PID
+	
+	exec 2>/dev/null
+
+	declare -a OPTION=([0]="Informações do sistema" [1]="Atualizar sistema" [2]="Limpar arquivos temporários" [3]="Instalar ambiente gráfico" [4]="Backup" [5]="USB Bootável") 
+ 
+	# Limpa variavel 'PASS' se o script foi interrompido pelo usuario
+	trap ResetVal SIGINT SIGABRT SIGQUIT SIGKILL SIGALRM SIGSTOP SIGTSTP
+
+	OPT=$(zenity --list --title "$LOGO - Criado por: $AUTHOR"\
+            	--text "O que deseja fazer?"\
+      	    	--radiolist --column "Opção" --column "Descrição"\
+	    	 TRUE "${OPTION[0]}"\
+	    	 FALSE "${OPTION[1]}"\
+	    	 FALSE "${OPTION[2]}"\
+	    	 FALSE "${OPTION[3]}" \
+	    	 FALSE "${OPTION[4]}" \
+	    	 FALSE "${OPTION[5]}" \
+	    	 --cancel-label="Sair" \
+	    	 --width 400 \
+	     	--height 245)
+
+	#[ $? -eq 1 ] && ResetVal
+
+	case $OPT in
+		"${OPTION[0]}")
+			GetSystemInfo true
+			;;
+		"${OPTION[1]}")
+			# Chama a rotina de autenticação
+			# Retorna para o Menu principal se o valor retornado for diferente '0'
+			EnterRootPass
+			[[ $? -eq 1 ]] && return $?
+			UpdateSystem
+			;;
+		"${OPTION[2]}")
+			# Solicita senha 'sudo'
+			EnterRootPass
+			[[ $? -eq 1 ]] && return $?	
+			CleanSystem
+			;;
+		"${OPTION[3]}")
+			# Solicita senha
+			EnterRootPass
+			[[ $? -eq 1 ]] && return $?
+			InstallWindowsManager
+			;;
+		"${OPTION[4]}")
+			WinConfBackup true
+			;;
+		"${OPTION[5]}")
+			EnterRootPass
+			[[ $? -eq 1 ]] && return $?
+			CreateUSBLive true
+			;;
+		*)
+			ResetVal
+			;;
+			
+	esac
+
+	Main
+
+}
+
+if [ ${#@} -gt 0 ]; then
+	case "${@}" in
+		"--instalar"|"-i")
+			[[ $UID -eq 0 ]] && RegisterAPP || echo "Requer sudo." >&2 
+			ResetVal
+			;;
+		"--ajuda"|"-a")
+			echo "Uso: $SCRIPT [OPÇÕES]"
+			echo "Utilitário para configuração, atualização, criação de backups e USB Boot."
+			echo
+			echo "Opções:"
+			echo 
+			echo "-i, --instalar     Instala o script no sistema, tornando-o disponível no Shell e no Menu Programas. (somente root)."
+			echo "-r, --remover      Remove o script do sistema. (somente root)." 
+			echo "-n, --informacao   Exibe informações do sistema."
+			echo "-b, --backup       Exibe os agendamentos de backup."
+			echo "-l, --log-backup   Lista o log detalhado da execução dos backups."
+			echo "-s, --log-sistema  Lista o log detalhado da execução de limpeza, upgrade e atualizações do sistema."
+			echo "-a, --ajuda        Exibe detalhes."
+			exit 0
+			;;
+		"--remover"|"-r")
+			[[ $UID -eq 0 ]] && UnRegisterAPP || echo "Requer sudo." >&2
+			ResetVal
+			;;
+		"--informacao"|"-n")
+			GetSystemInfo false
+			ResetVal
+			;;
+		"--backup"|"-b")
+			ManagerBackup false
+			ResetVal
+			;;
+		"--log-backup"|"-l")
+			cat $BKP_SCRIPT_LOG/bkp.log 2>/dev/null | less
+			ResetVal
+			;;
+		"--log-sistema"|"-s")
+			cat $LOG 2>/dev/null | less
+			ResetVal
+			;;
+		*)
+			echo "$SCRIPT:"
+			echo 
+			echo "Erro: '${@}' Opção inválida"
+			echo "Digite: '$SCRIPT --ajuda' para mais detalhes."
+			exit 0
+			;;
+	esac
+fi
+
+
+if [ -e $PID ]; then
+	zenity --info \
+		--title="Informação" \
+		--text="GnUbuntu já está em execução." \
+		--timeout=2 \
+		--ellipsize
+	exit 1
+fi
+
+Main
