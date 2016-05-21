@@ -9,9 +9,10 @@
 declare PASS
 declare CMD 
 
+declare -r VERSION=1.0.1
 declare -r SCRIPT=$(basename "$0")
 declare -rx AUTHOR="x_SHAMAN_x"
-declare -r LOGO="GnUbuntu 1.0.1"
+declare -r LOGO="GnUbuntu $VERSION"
 
 declare -r FILE=/tmp/$SCRIPT.info
 declare -r BASE_DIR=$HOME/.gnubuntu
