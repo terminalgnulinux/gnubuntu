@@ -606,9 +606,11 @@ ResetVal()
 	rm -f /tmp/win.tmp &>/dev/null
 	rm -f /tmp/win2.tmp &>/dev/null
 	rm -f /tmp/com.tmp &>/dev/null
+	rm -f /tmp/schema.reset &>/dev/null
 	rm -f $PID &>/dev/null
 	rm -f $FILE &>/dev/null
-	rm $BASE_DIR/*.activated &>/dev/null
+	rm -f $BASE_DIR/*.activated &>/dev/null
+	
 
 	exit 0
 }
@@ -1332,8 +1334,8 @@ CreateUSBLive()
 	declare RETVAL
 	declare SELECT
 	declare USB
-	declare DISK_USB
-	declare SIZE
+	declare -i DISK_USB
+	declare -i SIZE
 	declare ISO9660="application/x-iso9660-image"
 	declare WAIT
 	declare DD_PID
@@ -1387,22 +1389,12 @@ CreateUSBLive()
 				CreateUSBLive true
 			fi
 			
-			zenity --question \
-				--title="Atenção" \
-				--text="<span color='#ff0000'>[ATENÇÃO]: Todos os arquivos salvos no seu dispositivo serão apagados.</span>\r\n\r\nDeseja continuar ?"	\
-				--cancel-label="Não" \
-				--ok-label="Sim" \
-				--default-cancel \
-				--ellipsize
-			
-
-			[[ $? -ne 0 ]] && CreateUSBLive false
-	
-					
 			DISK_USB=$(echo "$PASS" | sudo -S -k fdisk -l $USB 2>/dev/null | grep "^Disk $USB" | awk '{print $5}')
+			DISK_USB=$((DISK_USB/1024))
+
 			SIZE=$(du "$IMAGE" | awk '{print $1}') 
 			
-			if [ $SIZE -ge $DISK_USB ]; then
+			if [ $SIZE -gt $DISK_USB ]; then
 				zenity --warning \
 					--title="Atenção" \
 					--text="Capacidade do disco '$USB' insuficiente." \
@@ -1410,7 +1402,17 @@ CreateUSBLive()
 					--ellipsize
 				CreateUSBLive false	
 			fi
-			
+
+			zenity --question \
+				--title="Atenção" \
+				--text="<span color='#ff0000'>[ATENÇÃO]: Todos os arquivos salvos no seu dispositivo serão apagados.</span>\r\n\r\nDeseja continuar ?"	\
+				--cancel-label="Não" \
+				--ok-label="Sim" \
+				--default-cancel \
+				--ellipsize
+
+			[[ $? -ne 0 ]] && CreateUSBLive false
+	
 			echo "$PASS" | sudo S -k umount $USB* 2>/dev/null | sleep 2 | zenity --progress \
 												--title="Desmontar" \
 												--text="Demonstando '$USB'..." \
@@ -1428,8 +1430,6 @@ CreateUSBLive()
 			fi
 
 			CORES=$(lscpu | grep -i "^CPU(s):" | egrep -o "[0-9]{,2}$")
-			CORES=$((CORES*3))
-			
 			[ -z $CORES ] && CORES=2
 
 			SIZE=$(du -m "$IMAGE" | awk '{print $1}')
@@ -1458,6 +1458,8 @@ CreateUSBLive()
 					--auto-close \
 					--button='Cancelar!gtk-cancel':1
 
+				
+
 			if [ $? -eq 1 -o $? -eq 252 ]
 			then
 				echo "$PASS" | sudo -S -k kill -SIGTERM -SIGKILL $(ps aux | egrep "sudo -S -k dd if=$IMAGE of=$USB bs=4M|dd if=$IMAGE of=$USB bs=4M" | grep -v grep | awk '{print $2}')
@@ -1467,6 +1469,11 @@ CreateUSBLive()
 					--text="O Processo foi cancelado pelo usuário." 
 					
 			else
+				while [ ! -z "$(ps aux | egrep "sudo -S -k dd if=$IMAGE of=$USB bs=4M|dd if=$IMAGE of=$USB bs=4M" | grep -v grep | awk '{print $2}')" ]
+				do
+					echo "# Finalizando..."
+				done | zenity --title="Gravação" --progress --pulsate --no-cancel --auto-close --auto-kill
+
 				notify-send "$SCRIPT" "Imagem: '$(basename "$IMAGE")' foi gravada com sucesso" \
 						--icon=$NICON \
 						--urgency=normal
@@ -1487,6 +1494,8 @@ CreateUSBLive()
 
 ResetDefaultSchema()
 {
+	declare -r RESET_FILE="/tmp/schema.reset"
+
 	# Envia mensagem de confirmação de restauração para o usuário.
 	yad --form \
 		--title="Restaurar" \
@@ -1502,10 +1511,15 @@ ResetDefaultSchema()
 	[[ $? -eq 1 || $? -eq 252 ]] && return $? 
 
 	# Lista os children's do esquema selecionado pelo usuário
-	for schema in $(gsettings list-recursively | egrep "^$SCHEMA" | awk '{print $1,$2,$3}' | egrep "true$|false$" | awk '{print $1}' | sort | uniq)
+	gsettings list-recursively | egrep "^$SCHEMA" | awk '{print $1,$2,$3}' | egrep "true$|false$" | awk '{print $1,$2}' > "$RESET_FILE"
+	
+	# Redireciona arquivo para o destritor 3
+	exec 3< "$RESET_FILE"
+
+	while read schema <&3
 	do
 		# Executa um reset recursivo no esquema atual
-		gsettings reset-recursively $schema
+		gsettings reset $schema
 		
 		# Se ocorrer um erro durante o reset, envia uma mensagem ao usuário
 		if [ $? -eq 1 ]
