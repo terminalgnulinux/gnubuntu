@@ -9,7 +9,7 @@
 declare PASS
 declare CMD 
 
-declare -r VERSION=1.2
+declare -r VERSION=1.20
 declare -r SCRIPT=$(basename "$0")
 declare -rx AUTHOR="x_SHAMAN_x"
 declare -r LOGO="GnUbuntu $VERSION"
@@ -1836,6 +1836,10 @@ CheckUpdate()
 	declare -r RAW_UPDATE="https://raw.githubusercontent.com/terminalgnulinux/gnubuntu/master/GnUbuntu"
 	declare -r RAW_UPDATE_VERSION="https://raw.githubusercontent.com/terminalgnulinux/gnubuntu/master/version"
 	declare -r RAW_UPDATE_DETAILS="https://raw.githubusercontent.com/terminalgnulinux/gnubuntu/master/update"
+	declare -r URI_UPDATE_ICON="https://github.com/terminalgnulinux/gnubuntu/blob/master/GnUbuntu.png"
+	
+	# Icone
+	declare -r ICON_128x128=/usr/share/icons/hicolor/128x128/apps
 	
 	# Arquivos temporário para generação do patch
 	declare -r TMP_FILE=/tmp/gnUpdate.tmp
@@ -1922,7 +1926,17 @@ CheckUpdate()
 					
 							return 0
 						fi
-					
+		
+						echo $PASS | sudo -S -k wget --connect-timeout=3 $URI_UPDATE_ICON -O $ICON_128x128 | yad --progress \
+                                                                                       							--center \
+						                                                                                        --window-icon=$NICON \
+                                                						                                        --fixed \
+                                                                                        						--title="Atualização" \
+                                                                                       							--text="Aplicando atualizações..." \
+                                                                                        						--pulsate \
+                                                                                 						       	--no-buttons \
+                                                                                       							--timeout=1
+
 						#Aplica o patch de atualização	
 						#echo $PASS | sudo -S -k patch --silent $BIN < $PATCH 
 
