@@ -9,7 +9,7 @@
 declare PASS
 declare CMD 
 
-declare -r VERSION=1.2.0
+declare -r VERSION=1.2
 declare -r SCRIPT=$(basename "$0")
 declare -rx AUTHOR="x_SHAMAN_x"
 declare -r LOGO="GnUbuntu $VERSION"
@@ -22,7 +22,7 @@ declare -r LOG=$BKP_SCRIPT_LOG/$SCRIPT.log
 declare -r FIRSTEXEC=$BASEDIR/init
 declare -r CRONTAB_FILE=$BASE_DIR/profile.crontab
 declare -r PID=/tmp/GnUbuntu.pid
-declare -r NICON=/usr/share/icons/hicolor/128x128/apps/GnUbuntu.jpg
+declare -r NICON=/usr/share/icons/hicolor/128x128/apps/GnUbuntu.png
 
 [ ! -x /usr/bin/apt-get ] && {
 	echo "$SCRIPT: Incompatível com o seu sistema." >&2
@@ -602,6 +602,10 @@ InstallWindowsManager()
 ResetVal()
 {
 	unset PASS
+
+	# Finaliza processos em execução
+	kill -SIGTERM -SIGKILL "$(ps aux | grep -v grep | grep "curl https://raw.githubusercontent.com/terminalgnulinux" | awk '{print $2}')" &>/dev/null
+	kill -SIGTERM -SIGKILL "$(ps aux | grep -v grep | grep "field=Não verificar atualizações" | awk '{print $2}')" &>/dev/null
 
 	rm -f /tmp/win.tmp &>/dev/null
 	rm -f /tmp/win2.tmp &>/dev/null
@@ -1241,7 +1245,7 @@ DeleteSchedule()
 
 RegisterAPP()
 {
-	declare -r ICON=GnUbuntu.jpg
+	declare -r ICON=GnUbuntu.png
 	declare -r FILE_DESKTOP=GnUbuntu.desktop
 	declare -r HOME_APPLICATION=$HOME/.local/share/applications
 	declare -r USER_APPLICATION=/usr/share/applications
@@ -1266,12 +1270,15 @@ GenericName=Utilitário para update, backup e configurações
 Comment=Utilitário de Limpeza, Atualização, Upgrade, Agendamento de backup e OS Boot.
 Type=Application
 Exec=$SCRIPT
-Icon=$ICON_128x128/GnUbuntu.jpg
+Icon=$ICON_128x128/GnUbuntu.png
 Terminal=false
 Categories=Utility;
 EOF
 
 	echo -n "Instalando 'GnUbuntu'..."
+	
+	sleep 1
+	
 	cp -p  $HOME_APPLICATION/$FILE_DESKTOP "$HOME/$DESKTOP" &>/dev/null
 	sudo chmod 755 "$HOME/$DESKTOP/$FILE_DESKTOP" &>/dev/null
 	sudo chown $SUDO_USER.$SUDO_USER "$HOME/$DESKTOP/$FILE_DESKTOP" &>/dev/null
@@ -1286,7 +1293,6 @@ EOF
 	sudo cp "$PWD/$SCRIPT" $USER_BIN &>/dev/null
 	sudo chmod 755 $USER_BIN/$SCRIPT &>/dev/null
  
-	sleep 1
 	[ $? -eq 0 ] && echo -e "\e[00;32m[OK]\e[00;m" || echo -e "\e[00;31m[FALHA]\e[00;m" 
 
 	return $?
@@ -1296,7 +1302,7 @@ EOF
 UnRegisterAPP()
 {
 
-	declare -r ICON=GnUbuntu.jpg
+	declare -r ICON=GnUbuntu.png
 	declare -r FILE_DESKTOP=GnUbuntu.desktop
 	declare -r HOME_APPLICATION=$HOME/.local/share/applications
 	declare -r USER_APPLICATION=/usr/share/applications
@@ -1747,28 +1753,239 @@ ListSchemas()
 	exit 0
 }
 
-Main()
+CheckDepends()
 {
-	# Se o pacote 'zenity' estiver ausente, solicita ao usuário a instalação.
-	if [ ! -x /usr/bin/zenity -o ! -x /usr/bin/yad ]; then
-		read -n1 -p "Pacotes requeridos 'zenity e yad'. deseja instalar? (S\n)" RESP
+	# Dependências 
+	declare -r PACKAGE=("zenity" "yad" "curl")
+	declare DEPENDS
+	declare STATUS=0
+
+	# Verifica se as dependências estão instaladas
+	for dpkg in ${PACKAGE[@]}
+	do
+		[[ ! -x "$(which $dpkg)" ]] && DEPENDS="$DEPENDS $dpkg"
+	done
+	
+	# Se houver dependências
+	if [ ! -z "$DEPENDS" ]
+	then
+		echo "$SCRIPT: Erro: Dependência(s) encontrada(s)." >&2
+	
+		# Lista as dependências	
+		for dpkg in ${DEPENDS[@]}
+		do
+			echo "Depende de: $dpkg" >&2
+		done
 		
-		# Reposta padrão 'S'
+		echo
+		read -n1 -p "Deseja instalar as dependências? (S\n)" RESP
+		echo
+
+		# Se o usuário pressionar ENTER assume resposta padrão
 		[[ -z $RESP ]] && RESP='S'
 	
 		case $RESP in
-			s|S)
-				# Inicia o download e instalação, caso ocorra algum erro sairá automaticamente do script
-				sudo apt-get -y install zenity yad || exit 1
+			'S'|'s')
+				# Verifica se o usuário é root
+				if [ $UID -ne 0 ]
+				then
+					echo "$SCRIPT: Requer sudo" >&2
+					exit 1
+				fi
+				# Executa a instalação das dependências e trata os status do processo
+				# 0 - Bem sucedido
+				# 1 - Falha na instalação
+				# 100 - Pacote não encontrado no repositório
+				for dpkg in ${DEPENDS[@]}
+				do
+					echo -n "Instalando $dpkg ..."
+					sudo apt-get -y install $dpkg &>/dev/null 
+			
+					case $? in
+						0)
+							echo -e "\e[00;32m[OK]\e[00;m"
+							;;
+						1)
+							echo -e "\e[00;31m[FALHA]\e[00;m" 
+							STATUS=1
+							;;
+						100)
+							echo -e "\e[00;33m[NÃO ENCONTRADO]\e[00;m"
+							STATUS=1
+							;;
+					esac
+				done
+				# Sai do script
+				[[ $STATUS -eq 1 ]] && exit 1
 				;;
 			*)
-				echo
-				echo "$SCRIPT: Saindo..."
-				exit 0
+				# Se for 'N', 'n'
+				exit 1
 				;;
 		esac
-		
 	fi
+}
+
+CheckUpdate()
+{
+	exec 2>/dev/null
+	# Binário do script 
+	declare -r BIN="/usr/bin/GnUbuntu"
+	# URI's de acesso RAW
+	# Script, Versionamento, Atualização
+	declare -r RAW_UPDATE="https://raw.githubusercontent.com/terminalgnulinux/gnubuntu/master/GnUbuntu"
+	declare -r RAW_UPDATE_VERSION="https://raw.githubusercontent.com/terminalgnulinux/gnubuntu/master/version"
+	declare -r RAW_UPDATE_DETAILS="https://raw.githubusercontent.com/terminalgnulinux/gnubuntu/master/update"
+	
+	# Arquivos temporário para generação do patch
+	declare -r TMP_FILE=/tmp/gnUpdate.tmp
+	declare -r PATCH=/tmp/patch.tmp
+	declare -r UPDATE_LOCK="$BASE_DIR/update.lock"
+	
+	# Chega se o script está instalado e se a verificação automatica de atualizações está habilitada
+	if [ -x $BIN -a ! -e "$UPDATE_LOCK" ]
+	then
+
+		# Verifica a versão disponivel para download
+		UPDATE_VERSION=$(curl $RAW_UPDATE_VERSION)
+		[[ -z $UPDATE_VERSION ]] && return 1
+	
+		# Se a versão disponivel para download é mais atual que a versão instalada.
+		if [ $(echo "$UPDATE_VERSION > $VERSION" | bc) -eq 1 ]
+		then
+			# Inicia a variável com a descrição da atualização.
+			eval "declare -r $(curl $RAW_UPDATE_DETAILS)"
+			
+			while true
+			do
+				 OPT=$(yad --form \
+					--center \
+					--fixed \
+					--on-top \
+					--window-icon=$NICON \
+					--title="Atualização" \
+					--text="Foram encontradas atualizações disponiveis.\r\nDeseja atualizar ?" \
+					--field='':LBL '' \
+					--field="Não verificar atualizações":CHK FALSE \
+					--field='':LBL '' \
+					--image=gtk-dialog-question \
+					--button="Sim":0 \
+					--button="Não":1 \
+					--button="Detalhes":2)
+				
+				
+				RETVAL=$?
+				
+				# Se o usuário desabilitou a verificação de atualização, cria-se um arquivo lock e sai função
+				[[ "$(echo $OPT | cut -d'|' -f2)" == "TRUE" ]] && { touch $UPDATE_LOCK; return 0; }
+	
+				case $RETVAL in 
+					0)
+						EnterRootPass
+						[[ $? -eq 1 ]] && return 1
+						# Baixa o código fonte da atualização no repositório do git hub
+						# criando um arquivo temporário para geração do patch
+						# Se não houver conexão em 3 segundos com o servidor do git, a conexão é abortada.
+						wget --connect-timeout=3 $RAW_UPDATE -O $TMP_FILE &>/dev/null | yad --progress \
+														--center \
+														--window-icon=$NICON \
+														--fixed \
+														--title="Atualização" \
+														--text="Baixando atualizações..." \
+														--pulsate \
+														--no-buttons \
+														--timeout=1
+					
+						# Compara o código fonte instalado com código da atualização e redireciona a diferença para o patch
+						diff -uNr $BIN $TMP_FILE > $PATCH | yad --progress \
+											--center \
+											--window-icon=$NICON \
+											--fixed \
+											--title="Atualização" \
+											--text="Verificando versão instalada..." \
+											--pulsate \
+											--no-buttons \
+											--timeout=1
+
+						# Se a versão instalada já estiver atualizada.	
+						if [ ! -s $PATCH ]
+						then
+							yad --info \
+								--center \
+								--fixed \
+								--window-icon=$NICON \
+								--title="Atualização" \
+								--text="A versão instalada já está atualizada." \
+								--no-buttons \
+								--image=gtk-dialog-info \
+								--timeout=2 						
+					
+							return 0
+						fi
+					
+						#Aplica o patch de atualização	
+						#echo $PASS | sudo -S -k patch --silent $BIN < $PATCH 
+
+						if [ $? -eq 0 ]
+						then
+							yad --info \
+								--center \
+								--fixed \
+								--window-icon=$NICON \
+								--title="Atualização" \
+								--text="Atualização realizada com sucesso !!!\r\nReinicie o '$SCRIPT', para que as atualizações tenham efeito." \
+								--no-buttons \
+								--image=gtk-ok 
+							return 0
+							
+						else
+							yad --info \
+								--center \
+								--fixed \
+								--window-icon=$NICON \
+								--title="Atualização" \
+								--text="Falha durante o processo de atualização." \
+								--image=gtk-dialog-error \
+								--no-buttons 
+						
+							return 1
+						fi
+					
+						;;
+					1|252)
+						# Fecha janela
+						return 0
+						;;
+					2)
+						# Detalhes da atualização disponivel
+						yad --list \
+							--center \
+							--title="Detalhes" \
+							--text="Atualizações disponiveis:" \
+							--width=600 \
+							--height=400 \
+							--column="Nome" \
+							--column="Versão" \
+							--column="Descrição" \
+							 "${UPDATE_DETAILS[@]}" \
+							--no-buttons \
+							--no-click \
+							--dclick-action=  
+							;;
+				esac
+			done				
+		fi	
+	fi 
+
+	# Remove os arquivos temporários
+	rm -f $TMP_FILE &>/dev/null
+	rm -f $PATCH &>/dev/null
+
+}
+
+Main()
+{
+	CheckDepends
 
 	if [ -e $BASE_DIR ]; then
 		if [ ! -r $BASE_DIR -o ! -w $BASE_DIR ]; then
@@ -1795,6 +2012,7 @@ fi
 	echo $$ > $PID
 	
 	exec 2>/dev/null
+
 
 	declare -a OPTION=([0]="Informações do sistema" [1]="Atualizar sistema" [2]="Limpar arquivos temporários" [3]="Instalar ambiente gráfico" [4]="Backup" [5]="USB Bootável" [6]="Configurações avançadas") 
  
@@ -1865,6 +2083,7 @@ fi
 
 }
 
+
 # Se houver argumentos.
 # Verificar os argumentos passados e envia o valor 'false' para as funções
 # indicando que a saida é via terminal
@@ -1872,6 +2091,7 @@ if [ ${#@} -gt 0 ]; then
 	case "$1" in
 		"--instalar"|"-i")
 			# Instalar
+			CheckDepends
 			[[ $UID -eq 0 ]] && RegisterAPP || echo "Requer sudo." >&2 
 			ResetVal
 			;;
@@ -1950,4 +2170,5 @@ if [ -e $PID ]; then
 	exit 1
 fi
 
+CheckUpdate &
 Main
