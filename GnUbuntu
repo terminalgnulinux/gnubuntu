@@ -1756,7 +1756,7 @@ ListSchemas()
 CheckDepends()
 {
 	# Dependências 
-	declare -r PACKAGE=("zenity" "yad" "curl")
+	declare -r PACKAGE=("zenity" "yad" "curl" "gsettings" "patch" "diff" "wget")
 	declare DEPENDS
 	declare STATUS=0
 
@@ -1880,8 +1880,8 @@ CheckUpdate()
 				
 				RETVAL=$?
 				
-				# Se o usuário desabilitou a verificação de atualização, cria-se um arquivo lock e sai função
-				[[ "$(echo $OPT | cut -d'|' -f2)" == "TRUE" ]] && { touch $UPDATE_LOCK; return 0; }
+				# Se o usuário desabilitou a verificação de atualização, cria-se um arquivo lock e sai da função
+				[[ "$(echo $OPT | cut -d'|' -f2)" == "TRUE" ]] && { EnableUpdate nao; return 0; }
 	
 				case $RETVAL in 
 					0)
@@ -1998,9 +1998,38 @@ CheckUpdate()
 
 }
 
+EnableUpdate()
+{
+	# Pega o argumento passado 
+	declare -r ARG=$1
+
+	# Se o argumento foi omitido
+	if [ -z $ARG ]
+		then
+		echo "$SCRIPT: Requer argumento." >&2
+		exit 1
+	else 
+		# Se o argumento for válido, aplica ação.
+		case $ARG in
+			sim)
+				rm -f "$BASE_DIR/update.lock" &>/dev/null
+				;;
+			nao)
+				touch "$BASE_DIR/update.lock" &>/dev/null
+				;;
+			*)
+				echo "$SCRIPT: Erro: '$ARG' argumento inválido." >&2 
+				return 1
+				;;
+		esac
+	fi
+	
+	return 0
+				
+}
+
 Main()
 {
-	CheckDepends
 
 	if [ -e $BASE_DIR ]; then
 		if [ ! -r $BASE_DIR -o ! -w $BASE_DIR ]; then
@@ -2104,13 +2133,13 @@ fi
 # indicando que a saida é via terminal
 if [ ${#@} -gt 0 ]; then
 	case "$1" in
-		"--instalar"|"-i")
+		--instalar|-i)
 			# Instalar
 			CheckDepends
 			[[ $UID -eq 0 ]] && RegisterAPP || echo "Requer sudo." >&2 
 			ResetVal
 			;;
-		"--ajuda"|"-a")
+		--ajuda|-a)
 			echo "Uso: $SCRIPT [OPÇÕES] [ARG]"
 			echo "Utilitário para configuração, atualização, criação de backups, USB Boot e configurações avançadas."
 			echo
@@ -2123,46 +2152,51 @@ if [ ${#@} -gt 0 ]; then
 			echo "-l, --log-backup                Lista o log detalhado da execução dos backups."
 			echo "-s, --log-sistema               Lista o log detalhado da execução de limpeza, upgrade e atualizações do sistema."
 			echo "-c, --listar-config <esquema>   Lista configurações do esquema. Se esquema for omitido, exibe todas as configurações."
-			echo "-e, --listar-esquemas           Lista esquemas disponíveis." 
+			echo "-e, --listar-esquemas           Lista esquemas disponíveis."
+			echo "-v, --ver-atualiacao <sim|nao>  Habilita/Desabilita a verificação automática de atualizações." 
 			echo "-a, --ajuda                     Exibe detalhes."
 			exit 0
 			;;
-		"--remover"|"-r")
+		-remover|-r)
 			# Remover
 			[[ $UID -eq 0 ]] && UnRegisterAPP || echo "Requer sudo." >&2
 			ResetVal
 			;;
-		"--informacao"|"-n")
+		--informacao|-n)
 			# Informação
 			GetSystemInfo false
 			ResetVal
 			;;
-		"--backup"|"-b")
+		--backup|-b)
 			# Lista backups
 			ManagerBackup false
 			ResetVal
 			;;
-		"--log-backup"|"-l")
+		--log-backup|-l)
 			# Exibe log de backup
 			cat $BKP_SCRIPT_LOG/bkp.log 2>/dev/null | less
 			ResetVal
 			;;
-		"--log-sistema"|"-s")
+		--log-sistema|-s)
 			# Log do sistema
 			cat $LOG 2>/dev/null | less
 			ResetVal
 			;;
-		"--listar-config"|"-c")
+		--listar-config|-c)
 			# Lista configurações
 			# $2 = argumento que contém o nome do esquema, que é passado com a função.
 			ListAdvancedConfig $2
 			ResetVal
 			;;
-		"--listar-esquemas"|"-e")
+		--listar-esquemas|-e)
 			# Lista esquemas
 			ListSchemas
 			ResetVal
 			;;
+		--ver-atualizacao|-v)
+			EnableUpdate $2
+			ResetVal
+			;;						
 		*)
 			# Argumento inválido
 			echo "$SCRIPT:"
@@ -2185,5 +2219,6 @@ if [ -e $PID ]; then
 	exit 1
 fi
 
+CheckDepends
 CheckUpdate &
 Main
