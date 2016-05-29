@@ -1836,10 +1836,10 @@ CheckUpdate()
 	declare -r RAW_UPDATE="https://raw.githubusercontent.com/terminalgnulinux/gnubuntu/master/GnUbuntu"
 	declare -r RAW_UPDATE_VERSION="https://raw.githubusercontent.com/terminalgnulinux/gnubuntu/master/version"
 	declare -r RAW_UPDATE_DETAILS="https://raw.githubusercontent.com/terminalgnulinux/gnubuntu/master/update"
-	declare -r URI_UPDATE_ICON="https://github.com/terminalgnulinux/gnubuntu/blob/master/GnUbuntu.png"
+	declare -r RAW_UPDATE_ICON="https://raw.githubusercontent.com/terminalgnulinux/gnubuntu/master/GnUbuntu.png"
 	
 	# Icone
-	declare -r ICON_128x128=/usr/share/icons/hicolor/128x128/apps
+	declare -r ICON_128x128=/usr/share/icons/hicolor/128x128/apps/GnUbuntu.png
 	
 	# Arquivos temporário para generação do patch
 	declare -r TMP_FILE=/tmp/gnUpdate.tmp
@@ -1926,8 +1926,9 @@ CheckUpdate()
 					
 							return 0
 						fi
-		
-						echo $PASS | sudo -S -k wget --connect-timeout=3 $URI_UPDATE_ICON -O $ICON_128x128 | yad --progress \
+						
+						# Download do icone		
+						echo $PASS | sudo -S -k wget --connect-timeout=3 $RAW_UPDATE_ICON -O $ICON_128x128 | yad --progress \
                                                                                        							--center \
 						                                                                                        --window-icon=$NICON \
                                                 						                                        --fixed \
@@ -1936,9 +1937,9 @@ CheckUpdate()
                                                                                         						--pulsate \
                                                                                  						       	--no-buttons \
                                                                                        							--timeout=1
-
-						#Aplica o patch de atualização	
-						#echo $PASS | sudo -S -k patch --silent $BIN < $PATCH 
+						
+						# Aplica o patch de atualização	
+						echo $PASS | sudo -S -k patch --silent $BIN $PATCH 
 
 						if [ $? -eq 0 ]
 						then
