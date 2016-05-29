@@ -2010,6 +2010,10 @@ EnableUpdate()
 		exit 1
 	else 
 		# Se o argumento for válido, aplica ação.
+		# O bloqueio do update aplica-se na existẽncia do arquivo 'update.lock'
+		# Argumentos:
+		# sim - remove o arquivo 
+		# nao - cria o arquivo 
 		case $ARG in
 			sim)
 				rm -f "$BASE_DIR/update.lock" &>/dev/null
@@ -2157,7 +2161,7 @@ if [ ${#@} -gt 0 ]; then
 			echo "-a, --ajuda                     Exibe detalhes."
 			exit 0
 			;;
-		-remover|-r)
+		--remover|-r)
 			# Remover
 			[[ $UID -eq 0 ]] && UnRegisterAPP || echo "Requer sudo." >&2
 			ResetVal
