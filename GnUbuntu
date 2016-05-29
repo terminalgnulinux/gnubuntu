@@ -9,7 +9,7 @@
 declare PASS
 declare CMD 
 
-declare -r VERSION=1.20
+declare -r VERSION=1.30
 declare -r SCRIPT=$(basename "$0")
 declare -rx AUTHOR="x_SHAMAN_x"
 declare -r LOGO="GnUbuntu $VERSION"
@@ -2149,16 +2149,16 @@ if [ ${#@} -gt 0 ]; then
 			echo
 			echo "Opções:"
 			echo 
-			echo "-i, --instalar                  Instala o script no sistema, tornando-o disponível no Shell e no Menu Programas. (somente root)."
-			echo "-r, --remover                   Remove o script do sistema. (somente root)." 
-			echo "-n, --informacao                Exibe informações do sistema."
-			echo "-b, --backup                    Exibe os agendamentos de backup."
-			echo "-l, --log-backup                Lista o log detalhado da execução dos backups."
-			echo "-s, --log-sistema               Lista o log detalhado da execução de limpeza, upgrade e atualizações do sistema."
-			echo "-c, --listar-config <esquema>   Lista configurações do esquema. Se esquema for omitido, exibe todas as configurações."
-			echo "-e, --listar-esquemas           Lista esquemas disponíveis."
-			echo "-v, --ver-atualiacao <sim|nao>  Habilita/Desabilita a verificação automática de atualizações." 
-			echo "-a, --ajuda                     Exibe detalhes."
+			echo "-i, --instalar                    Instala o script no sistema, tornando-o disponível no Shell e no Menu Programas. (somente root)."
+			echo "-r, --remover                     Remove o script do sistema. (somente root)." 
+			echo "-n, --informacao                  Exibe informações do sistema."
+			echo "-b, --backup                      Exibe os agendamentos de backup."
+			echo "-l, --log-backup                  Lista o log detalhado da execução dos backups."
+			echo "-s, --log-sistema                 Lista o log detalhado da execução de limpeza, upgrade e atualizações do sistema."
+			echo "-c, --listar-config <esquema>     Lista configurações do esquema. Se esquema for omitido, exibe todas as configurações."
+			echo "-e, --listar-esquemas             Lista esquemas disponíveis."
+			echo "-v, --ver-atualizacao <sim|nao>   Habilita/Desabilita a verificação automática de atualizações." 
+			echo "-a, --ajuda                       Exibe detalhes."
 			exit 0
 			;;
 		--remover|-r)
